@@ -1,0 +1,1256 @@
+/* ShadowTrainer web shell - graphite skin.
+ *
+ * Pure ASCII, no external assets: system fonts, CSS shapes and inline SVG only.
+ * Every colour, radius, spacing step, font size and duration is a custom
+ * property declared in the :root block below.
+ *
+ * Layout contract: the window is 1360x900 by default and never smaller than
+ * 1240x820 (enforced by the host, not by CSS). The app is a two column grid -
+ * a fixed 200px rail and a content column - and the only scrolling region is
+ * .pagebody, which scrolls vertically. Nothing may overflow horizontally.
+ */
+
+/* ====================================================================== */
+/* 1. Tokens                                                              */
+/* ====================================================================== */
+:root {
+  /* surfaces - deep graphite, layered rather than outlined */
+  --bg-app: #0c0d0f;
+  --bg-rail: #090a0c;
+  --bg-titlebar: #101216;
+  --surface-1: #131518;
+  --surface-2: #191c20;
+  --surface-3: #1f2328;
+  --surface-4: #262b31;
+  --surface-inset: #0e1013;
+  --surface-veil: rgba(255, 255, 255, 0.035);
+  --surface-veil-2: rgba(255, 255, 255, 0.07);
+
+  /* hairlines */
+  --line-hair: #1d2125;
+  --line-1: #262b31;
+  --line-2: #333a42;
+  --line-3: #454e58;
+
+  /* ink */
+  --text-1: #e9ecef;
+  --text-2: #b3bcc6;
+  --text-3: #8a94a0;
+  --text-4: #626b76;
+  --text-on-accent: #11140a;
+
+  /* accent: one confident lime, plus a muted amber/red pair for state */
+  --accent: #c8f04a;
+  --accent-bright: #d8fb6c;
+  --accent-dim: #93b52c;
+  --accent-soft: rgba(200, 240, 74, 0.12);
+  --accent-softer: rgba(200, 240, 74, 0.06);
+  --accent-line: rgba(200, 240, 74, 0.38);
+  --focus-ring: rgba(200, 240, 74, 0.55);
+  --state-ok: #58d68d;
+  --state-busy: #f0b35e;
+  --state-danger: #ff6f61;
+  --state-danger-bright: #ff8d81;
+  --danger-soft: rgba(255, 111, 97, 0.12);
+  --danger-line: rgba(255, 111, 97, 0.40);
+  --busy-soft: rgba(240, 179, 94, 0.16);
+  --busy-line: rgba(240, 179, 94, 0.45);
+  --scrim: rgba(0, 0, 0, 0.45);
+
+  /* geometry */
+  --rail-w: 200px;
+  --nav-h: 52px;
+  --r-1: 4px;
+  --r-2: 6px;
+  --r-3: 9px;
+  --r-4: 12px;
+  --r-pill: 999px;
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 20px;
+  --sp-7: 24px;
+  --sp-8: 32px;
+  --pad-x: 24px;
+  --pad-card: 18px;
+  --ctl-h: 30px;
+  --hex-addr-w: 130px;
+  --hex-spacer-w: 12px;
+  --hex-gap: 3px;
+  --hex-row-h: 20px;
+
+  /* type */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+             "Inter", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas,
+               "SFMono-Regular", "DejaVu Sans Mono", Menlo, monospace;
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-md: 13.5px;
+  --fs-lg: 15px;
+  --fs-xl: 21px;
+  --fs-2xl: 30px;
+  --lh-tight: 1.2;
+  --lh-body: 1.5;
+  --lh-hint: 1.55;
+  --track-caption: 0.09em;
+  --track-tight: -0.01em;
+
+  /* motion */
+  --dur-1: 120ms;
+  --dur-2: 160ms;
+  --ease-1: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* elevation: hairline via ring, depth via shadow */
+  --ring-hair: 0 0 0 1px rgba(255, 255, 255, 0.035);
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --sh-2: 0 10px 28px rgba(0, 0, 0, 0.42);
+  --sh-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ====================================================================== */
+/* 2. Base                                                                */
+/* ====================================================================== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text-1);
+  font: 400 var(--fs-md) / var(--lh-body) var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Custom scrollbars: thin, self-effacing, brightest on hover. */
+.pagebody,
+.nav {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+
+.pagebody::-webkit-scrollbar,
+.nav::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.pagebody::-webkit-scrollbar-track,
+.nav::-webkit-scrollbar-track,
+.pagebody::-webkit-scrollbar-corner,
+.nav::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.pagebody::-webkit-scrollbar-thumb,
+.nav::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: var(--r-pill);
+}
+
+.pagebody::-webkit-scrollbar-thumb:hover,
+.nav::-webkit-scrollbar-thumb:hover {
+  background: var(--line-3);
+  background-clip: content-box;
+}
+
+/* Focus: always visible, never a browser default. */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+
+/* ====================================================================== */
+/* 3. Frame: rail + content column                                        */
+/* ====================================================================== */
+.app {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  height: 100vh;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--line-hair);
+}
+
+.rail-top {
+  padding: var(--sp-6) var(--sp-5) var(--sp-5);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* The product mark: the artwork at 26px, ringed so it reads as a badge rather
+   than a pasted-in picture. */
+.brand-glyph {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  box-shadow: 0 0 0 1px rgba(150, 210, 255, 0.22), 0 0 14px rgba(120, 90, 220, 0.30);
+}
+
+/* The wordmark has to fit the 200px rail beside a 26px glyph, so it is set at
+   the largest size that still clears the rail padding. */
+.brand-mark {
+  font-size: 17.5px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: var(--lh-tight);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brand-caption {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--track-caption);
+  color: var(--text-3);
+}
+
+.rail-rule {
+  height: 1px;
+  margin: 0 var(--sp-5) var(--sp-5);
+  background: linear-gradient(90deg, var(--line-1), rgba(38, 43, 49, 0));
+}
+
+.rail-caption {
+  padding: 0 var(--sp-5);
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--track-caption);
+  color: var(--text-4);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.nav-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  height: var(--nav-h);
+  padding: 0 var(--sp-5);
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-1), color var(--dur-1) var(--ease-1),
+              box-shadow var(--dur-1) var(--ease-1);
+}
+
+.nav-item:hover {
+  background: var(--surface-veil);
+  color: var(--text-1);
+}
+
+.nav-item:active {
+  background: var(--surface-veil-2);
+}
+
+.nav-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.nav-index {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--dur-1) var(--ease-1);
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item.is-active {
+  background: linear-gradient(90deg, var(--accent-soft), rgba(0, 0, 0, 0) 78%);
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.nav-item.is-active .nav-index {
+  color: var(--accent);
+}
+
+.session {
+  margin-top: auto;
+  padding: var(--sp-5) var(--sp-5) var(--sp-6);
+  border-top: 1px solid var(--line-hair);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0), var(--scrim));
+}
+
+.session-state {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: var(--r-pill);
+  background: var(--state-ok);
+  box-shadow: 0 0 0 3px rgba(88, 214, 141, 0.16);
+}
+
+.dot[data-state="scanning"] {
+  background: var(--state-busy);
+  box-shadow: 0 0 0 3px var(--busy-soft);
+  animation: dot-pulse 1.4s var(--ease-1) infinite;
+}
+
+.dot[data-state="stopping"] {
+  background: var(--state-danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.session-word {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.session-note {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--track-caption);
+  color: var(--text-4);
+}
+
+.session-note {
+  margin-bottom: var(--sp-2);
+}
+
+.content {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+/* ====================================================================== */
+/* 4. Title bar (the app draws its own chrome; no native frame)           */
+/* ====================================================================== */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 46px;
+  padding-left: var(--sp-6);
+  background: var(--bg-titlebar);
+  border-bottom: 1px solid var(--line-hair);
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+
+.titlebar-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.titlebar-glyph {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-line);
+}
+
+.titlebar-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.titlebar-actions {
+  display: flex;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.winbtn {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-1), color var(--dur-1) var(--ease-1);
+}
+
+.winbtn:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.winbtn:active {
+  background: var(--surface-4);
+}
+
+.winbtn-close:hover {
+  background: var(--state-danger);
+  color: #fff;
+}
+
+.winbtn:focus-visible {
+  outline-offset: -3px;
+}
+
+/* ====================================================================== */
+/* 5. Page head: banner, host line, stop button                           */
+/* ====================================================================== */
+.pagehead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: var(--sp-6) var(--pad-x) var(--sp-4);
+}
+
+.pagehead-lead {
+  min-width: 0;
+}
+
+.banner {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: var(--track-tight);
+  line-height: var(--lh-tight);
+  color: var(--text-1);
+}
+
+.hostline {
+  margin-top: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.01em;
+  color: var(--text-3);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.host-pid {
+  color: var(--accent);
+}
+
+.pagehead .btn {
+  flex: 0 0 auto;
+}
+
+/* ====================================================================== */
+/* 6. Scrollable page body                                                */
+/* ====================================================================== */
+.pagebody {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 var(--pad-x) var(--sp-7);
+}
+
+/* No top padding on the scrollport: a sticky table header then parks flush
+ * with the top edge instead of leaving a band for rows to show through. */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding-top: var(--sp-2);
+}
+
+.page[hidden],
+.page.is-hidden {
+  display: none;
+}
+
+/* ====================================================================== */
+/* 7. Cards, fields, controls                                             */
+/* ====================================================================== */
+.card {
+  padding: var(--pad-card);
+  background: var(--surface-1);
+  border-radius: var(--r-3);
+  box-shadow: var(--ring-hair), var(--sh-1), var(--sh-inset);
+}
+
+.card-table {
+  padding: 0;
+  min-height: 96px;
+  overflow: visible;
+}
+
+.card-flush {
+  padding: 0;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  column-gap: var(--sp-5);
+  row-gap: var(--sp-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 var(--field-w, 180px);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.field-w-xs { --field-w: 96px; }
+.field-w-sm { --field-w: 132px; }
+.field-w-md { --field-w: 168px; }
+.field-w-lg { --field-w: 216px; }
+.field-w-xl { --field-w: 268px; }
+.field-w-2xl { --field-w: 340px; }
+
+.field-label {
+  display: block;
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-input {
+  width: 100%;
+  min-width: 0;
+  height: var(--ctl-h);
+  padding: 0 var(--sp-4);
+  color: var(--text-1);
+  background: var(--surface-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--dur-1) var(--ease-1),
+              background var(--dur-1) var(--ease-1),
+              box-shadow var(--dur-1) var(--ease-1);
+}
+
+.field-input::placeholder {
+  color: var(--text-4);
+}
+
+.field-input:hover {
+  border-color: var(--line-2);
+}
+
+.field-input:focus,
+.field-input:focus-visible {
+  border-color: var(--accent-line);
+  background: var(--surface-2);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field-input.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.field-select .field-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 26px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
+    linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) calc(50% + 1px),
+    calc(100% - 10px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+.field-select .field-input option {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.field-check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--ctl-h);
+  flex-basis: auto;
+}
+
+.field-check .field-label {
+  margin-bottom: 0;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  display: grid;
+  place-content: center;
+  background: var(--surface-inset);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-1),
+              border-color var(--dur-1) var(--ease-1),
+              box-shadow var(--dur-1) var(--ease-1);
+}
+
+input[type="checkbox"]::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scale(0);
+  transition: transform var(--dur-2) var(--ease-1);
+}
+
+input[type="checkbox"]:hover {
+  border-color: var(--line-3);
+}
+
+input[type="checkbox"]:checked {
+  border-color: var(--accent-line);
+  background: var(--accent-softer);
+}
+
+input[type="checkbox"]:checked::after {
+  transform: scale(1);
+}
+
+input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: var(--ctl-h);
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-2);
+  background: var(--surface-3);
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: var(--ring-hair);
+  transition: background var(--dur-1) var(--ease-1), color var(--dur-1) var(--ease-1),
+              box-shadow var(--dur-1) var(--ease-1), transform var(--dur-1) var(--ease-1);
+}
+
+.btn:hover {
+  background: var(--surface-4);
+}
+
+.btn:active {
+  background: var(--surface-2);
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+  box-shadow: var(--sh-1), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.btn-primary:hover {
+  background: var(--accent-bright);
+}
+
+.btn-primary:active {
+  background: var(--accent-dim);
+}
+
+.btn-danger {
+  background: var(--danger-soft);
+  color: var(--state-danger);
+  box-shadow: inset 0 0 0 1px var(--danger-line);
+}
+
+.btn-danger:hover {
+  background: rgba(255, 111, 97, 0.22);
+  color: var(--state-danger-bright);
+}
+
+.btn-quiet {
+  background: transparent;
+  color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--line-1);
+}
+
+.btn-quiet:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.field-actions {
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line-hair);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-hint);
+  color: var(--text-3);
+  max-width: 96ch;
+}
+
+.hint + .hint {
+  margin-top: var(--sp-1);
+}
+
+.readout {
+  display: flex;
+  align-items: center;
+  flex: 1 1 260px;
+  min-width: 0;
+  min-height: var(--ctl-h);
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-2);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line-hair);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.readout-wide {
+  flex-basis: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  white-space: normal;
+  line-height: var(--lh-hint);
+  color: var(--text-3);
+}
+
+/* ====================================================================== */
+/* 8. Progress                                                            */
+/* ====================================================================== */
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+}
+
+.progress-label {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-inset);
+  box-shadow: inset 0 0 0 1px var(--line-hair);
+  overflow: hidden;
+}
+
+/* Determinate: JS sets --fill, e.g. bar.style.setProperty('--fill', '42%').
+ * Indeterminate: add .is-indeterminate and the fill animates instead. */
+.progress-fill {
+  display: block;
+  height: 100%;
+  width: var(--fill, 0%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent) 70%, var(--accent-bright));
+  transition: width var(--dur-2) var(--ease-1);
+}
+
+.progress.is-indeterminate .progress-fill {
+  width: 32%;
+  transition: none;
+  animation: progress-marquee 1.15s var(--ease-1) infinite;
+}
+
+.progress.is-busy .progress-fill {
+  background: linear-gradient(90deg, var(--state-busy), var(--accent));
+}
+
+.progress.is-failed .progress-fill {
+  background: linear-gradient(90deg, var(--state-danger), var(--state-danger-bright));
+}
+
+/* ====================================================================== */
+/* 9. Tables and paging                                                   */
+/* ====================================================================== */
+.data-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--fs-sm);
+}
+
+.data-table th,
+.data-table td {
+  height: var(--ctl-h);
+  padding: 0 var(--sp-4);
+  text-align: left;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 32px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--track-caption);
+  box-shadow: inset 0 -1px 0 var(--line-1);
+}
+
+.data-table thead th:first-child {
+  border-top-left-radius: var(--r-3);
+}
+
+.data-table thead th:last-child {
+  border-top-right-radius: var(--r-3);
+}
+
+.data-table tbody td {
+  border-bottom: 1px solid var(--line-hair);
+  color: var(--text-1);
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.data-table tbody tr:hover td {
+  background: var(--surface-veil);
+}
+
+.data-table td.num,
+.data-table td.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.data-table tr.is-placeholder td {
+  color: var(--text-4);
+}
+
+.data-table tr.is-selected td {
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+
+.col-1 { width: 60px; }
+.col-2 { width: 76px; }
+.col-3 { width: 96px; }
+.col-4 { width: 118px; }
+.col-5 { width: 150px; }
+.col-6 { width: 170px; }
+.col-7 { width: 200px; }
+.col-8 { width: 230px; }
+.col-9 { width: 260px; }
+
+.paging {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-1);
+}
+
+.paging-label {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paging-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: 0 0 auto;
+}
+
+/* ====================================================================== */
+/* 10. Memory preview hex grid                                            */
+/* ====================================================================== */
+.hex {
+  display: grid;
+  grid-template-columns:
+    var(--hex-addr-w)
+    repeat(16, minmax(0, 1fr))
+    var(--hex-spacer-w)
+    repeat(16, minmax(0, 1fr));
+  grid-template-rows: auto repeat(16, var(--hex-row-h));
+  gap: var(--hex-gap);
+  padding: var(--sp-4);
+  background: var(--surface-inset);
+  border-radius: var(--r-2);
+  box-shadow: inset 0 0 0 1px var(--line-hair);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.hex-head {
+  align-self: center;
+  padding-bottom: var(--sp-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--track-caption);
+  color: var(--text-4);
+}
+
+.hex-head-bytes,
+.hex-head-ascii {
+  grid-column: span 16;
+  text-align: center;
+}
+
+.hex-head-spacer {
+  grid-column: span 1;
+}
+
+.hex-addr {
+  display: flex;
+  align-items: center;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.hex-cell,
+.ascii-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border-radius: var(--r-1);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  overflow: hidden;
+  cursor: default;
+  transition: background var(--dur-1) var(--ease-1), color var(--dur-1) var(--ease-1),
+              box-shadow var(--dur-1) var(--ease-1);
+}
+
+.hex-cell {
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-1);
+}
+
+.hex-cell:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.ascii-cell {
+  color: var(--text-3);
+}
+
+/* States wired by the editor in a later step. */
+.hex-cell.selected,
+.ascii-cell.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.hex-cell.staged,
+.ascii-cell.staged {
+  background: var(--busy-soft);
+  color: var(--state-busy);
+  box-shadow: inset 0 0 0 1px var(--busy-line);
+}
+
+.hex-cell.unreadable,
+.ascii-cell.unreadable {
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-4);
+  font-weight: 500;
+}
+
+/* The fill target: a range dragged out from the caret, distinct from the single
+   selected cell so the two never read as the same thing. */
+.hex-cell.is-selected-range,
+.ascii-cell.is-selected-range {
+  background: var(--selection-soft, rgba(200, 240, 74, 0.14));
+}
+
+.hex-cell,
+.ascii-cell {
+  cursor: text;
+}
+
+/* The grid takes keyboard focus; show it, or the caret would be invisible to
+   anyone arriving by Tab. */
+.hex:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 3px;
+}
+
+/* Empty filler that keeps the ASCII block in its own grid columns. */
+.hex-spacer {
+  grid-column: span 1;
+}
+
+.hex-foot {
+  padding: var(--sp-3) var(--pad-card) var(--pad-card);
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}
+
+/* ====================================================================== */
+/* 11. Status line and footer                                             */
+/* ====================================================================== */
+.statusline {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--pad-x);
+  border-top: 1px solid var(--line-hair);
+  background: var(--bg-titlebar);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.status-tick {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.statusline > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footerline {
+  padding: var(--sp-3) var(--pad-x) var(--sp-4);
+  border-top: 1px solid var(--line-hair);
+  background: var(--bg-rail);
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}
+
+/* ====================================================================== */
+/* 12. Motion                                                             */
+/* ====================================================================== */
+@keyframes progress-marquee {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(330%); }
+}
+
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--busy-soft); }
+  50% { box-shadow: 0 0 0 6px rgba(240, 179, 94, 0.10); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ====================================================================== */
+/* 13. Startup veil                                                       */
+/* ====================================================================== */
+/* The window plays the word itself while WebView2 comes up - see paint_boot in
+ * src/webui.cpp, which owns that half of the sequence. The page's half is the
+ * reveal: the veil leaves through a hole that grows from the exact centre, which
+ * is what makes the UI look like it spreads outwards from the middle. The mask
+ * keeps everything OUTSIDE the hole, so the app is uncovered centre-first.
+ *
+ * Nothing here animates on its own. boot.js adds is-lifting once the window says
+ * its cover has finished. */
+@property --boot-hole {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: -1%;
+}
+
+:root {
+  --boot-reveal-dur: 780ms;   /* the veil's outward lift; boot.js reads this */
+}
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  /* The veil swallows clicks: nothing under it is visible yet, so nothing under
+     it should be reachable. boot.js removes the whole element once it lifts. */
+  pointer-events: auto;
+}
+
+.boot-stage {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-app);
+  /* The -1% start value parks the stop before 0, so at rest the gradient is
+     fully opaque and no pinhole shows at the centre. */
+  --boot-hole: -1%;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%,
+      transparent var(--boot-hole), #000 calc(var(--boot-hole) + 1%));
+  mask-image: radial-gradient(circle at 50% 50%,
+      transparent var(--boot-hole), #000 calc(var(--boot-hole) + 1%));
+  transition: --boot-hole var(--boot-reveal-dur) cubic-bezier(0.62, 0, 0.32, 1);
+}
+
+.boot.is-lifting .boot-stage {
+  /* Past 100%: the hole has to clear the corners, not just the edges. */
+  --boot-hole: 118%;
+}
+
+/* Sized to the window and scaled by a factor near 1, rather than a small ring
+   blown up 30x: a scaled-up hairline border would land thirty pixels thick, and
+   a scaled-up box-shadow would be re-blurred on every frame of the reveal. */
+.boot-wave {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 70vmax;
+  height: 70vmax;
+  margin: -35vmax 0 0 -35vmax;
+  border-radius: 50%;
+  border: 1.5px solid rgba(150, 220, 255, 0.55);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.boot.is-lifting .boot-wave {
+  animation: boot-wave var(--boot-reveal-dur) cubic-bezier(0.25, 0.65, 0.3, 1) both;
+}
+
+@keyframes boot-wave {
+  0%   { opacity: 0.75; transform: scale(0.40); }
+  60%  { opacity: 0.30; }
+  100% { opacity: 0; transform: scale(2.2); }
+}

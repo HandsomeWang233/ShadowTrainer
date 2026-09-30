@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShadowTrainer</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- ================= startup veil =================
+     The window plays the word itself while WebView2 comes up (see paint_boot in
+     webui.cpp); the page's part is the reveal it is asked for once that cover
+     has finished. boot.js owns the timing. -->
+<div class="boot" id="boot">
+  <div class="boot-stage" id="boot-stage"></div>
+  <span class="boot-wave" aria-hidden="true"></span>
+</div>
+<script>
+// Last-resort release. The veil is lifted by boot.js; if the module graph ever
+// fails to load, nothing else would, and the window would stay covered for good.
+setTimeout(function () {
+  var veil = document.getElementById('boot');
+  if (veil && veil.parentNode) veil.parentNode.removeChild(veil);
+}, 12000);
+</script>
+
+<div class="app">
+
+  <!-- ================= left rail ================= -->
+  <aside class="rail">
+    <div class="rail-top">
+      <div class="brand">
+        <img class="brand-glyph" src="img/brand.png" alt="" aria-hidden="true">
+        <span class="brand-mark">ShadowTrainer</span>
+      </div>
+      <div class="brand-caption">MEMORY</div>
+    </div>
+
+    <div class="rail-rule" aria-hidden="true"></div>
+    <div class="rail-caption">WORKSPACE</div>
+
+    <nav class="nav" aria-label="Workspace">
+      <button type="button" class="nav-item is-active" data-page-index="0" data-role="button" aria-current="page"><span class="nav-index">01</span><span class="nav-label">Scan</span></button>
+      <button type="button" class="nav-item" data-page-index="1" data-role="button"><span class="nav-index">02</span><span class="nav-label">Address list</span></button>
+      <button type="button" class="nav-item" data-page-index="2" data-role="button"><span class="nav-index">03</span><span class="nav-label">Memory preview</span></button>
+      <button type="button" class="nav-item" data-page-index="3" data-role="button"><span class="nav-index">04</span><span class="nav-label">Regions</span></button>
+      <button type="button" class="nav-item" data-page-index="4" data-role="button"><span class="nav-index">05</span><span class="nav-label">Modules</span></button>
+      <button type="button" class="nav-item" data-page-index="5" data-role="button"><span class="nav-index">06</span><span class="nav-label">Threads</span></button>
+      <button type="button" class="nav-item" data-page-index="6" data-role="button"><span class="nav-index">07</span><span class="nav-label">Pointer scan</span></button>
+    </nav>
+
+    <div class="session">
+      <div class="rail-caption">LOCAL SESSION</div>
+      <div class="session-state">
+        <span class="dot" id="session-dot" data-state="ready" aria-hidden="true"></span>
+        <span class="session-word" id="session-word" data-role="label">Session ready</span>
+      </div>
+      <div class="session-note">HOST PROCESS ONLY</div>
+    </div>
+  </aside>
+
+  <!-- ================= content column ================= -->
+  <main class="content">
+
+    <header class="titlebar">
+      <div class="titlebar-lead">
+        <span class="titlebar-glyph" aria-hidden="true"></span>
+        <span class="titlebar-title">ShadowTrainer</span>
+      </div>
+      <div class="titlebar-actions">
+        <button type="button" class="winbtn" id="win-minimize" data-role="button" aria-label="Minimize">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" class="winbtn" id="win-maximize" data-role="button" aria-label="Maximize">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.4" y="1.4" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button type="button" class="winbtn winbtn-close" id="win-close" data-role="button" aria-label="Close">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.6 1.6 8.4 8.4M8.4 1.6 1.6 8.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="pagehead">
+      <div class="pagehead-lead">
+        <h1 class="banner" id="banner" data-role="label">Memory scan</h1>
+        <div class="hostline" id="hostline">HOST PROCESS  /  PID <span class="host-pid" id="host-pid">----</span>   /   ` toggle menu</div>
+      </div>
+      <button type="button" class="btn btn-danger" id="stop-session" data-role="button">Stop session</button>
+    </section>
+
+    <div class="pagebody" id="pagebody">
+
+      <!-- ============ page 0: Scan ============ -->
+      <section class="page" id="page-scan" data-page-index="0" data-banner="Memory scan">
+        <div class="card">
+          <div class="fields">
+
+            <div class="field-row">
+              <label class="field field-w-md field-select">
+                <span class="field-label">Value type</span>
+                <select class="field-input" id="scan-type" data-role="combo">
+                  <option value="0">Byte</option>
+                  <option value="1">2 Bytes</option>
+                  <option value="2" selected>4 Bytes</option>
+                  <option value="3">8 Bytes</option>
+                  <option value="4">Float</option>
+                  <option value="5">Double</option>
+                  <option value="6">UTF-8</option>
+                  <option value="7">UTF-16</option>
+                  <option value="8">Array of bytes</option>
+                </select>
+              </label>
+              <label class="field field-check">
+                <span class="field-label">Signed</span>
+                <input type="checkbox" id="scan-signed" data-role="check" checked>
+              </label>
+              <label class="field field-check">
+                <span class="field-label">Hex</span>
+                <input type="checkbox" id="scan-hex" data-role="check">
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-lg field-select">
+                <span class="field-label">Comparison</span>
+                <select class="field-input" id="scan-compare" data-role="combo">
+                  <option value="0" selected>Exact</option>
+                  <option value="1">Unknown initial</option>
+                  <option value="2">Greater than</option>
+                  <option value="3">Less than</option>
+                  <option value="4">Between (inclusive)</option>
+                  <option value="5">Changed</option>
+                  <option value="6">Unchanged</option>
+                  <option value="7">Increased</option>
+                  <option value="8">Decreased</option>
+                  <option value="9">Increased by</option>
+                  <option value="10">Decreased by</option>
+                </select>
+              </label>
+              <label class="field field-w-xs">
+                <span class="field-label">Bytes (0=auto)</span>
+                <input class="field-input mono" type="text" id="scan-length" data-role="text" value="0">
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-lg">
+                <span class="field-label">Value</span>
+                <input class="field-input" type="text" id="scan-value" data-role="text" value="100">
+              </label>
+              <label class="field field-w-lg">
+                <span class="field-label">Second value</span>
+                <input class="field-input" type="text" id="scan-second" data-role="text" value="200">
+              </label>
+              <label class="field field-w-sm field-select">
+                <span class="field-label">Rounding</span>
+                <select class="field-input" id="scan-rounding" data-role="combo">
+                  <option value="0" selected>Exact</option>
+                  <option value="1">Rounded</option>
+                  <option value="2">Rounded (extreme)</option>
+                  <option value="3">Truncated</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-sm">
+                <span class="field-label">Start (hex)</span>
+                <input class="field-input mono" type="text" id="scan-begin" data-role="text" value="">
+              </label>
+              <label class="field field-w-sm">
+                <span class="field-label">End exclusive</span>
+                <input class="field-input mono" type="text" id="scan-end" data-role="text" value="">
+              </label>
+              <label class="field field-w-sm field-select">
+                <span class="field-label">Alignment</span>
+                <select class="field-input" id="scan-alignment" data-role="combo">
+                  <option value="1">1 byte(s)</option>
+                  <option value="2">2 byte(s)</option>
+                  <option value="4" selected>4 byte(s)</option>
+                  <option value="8">8 byte(s)</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="field-row field-actions">
+              <button type="button" class="btn btn-primary" id="scan-first" data-role="button">First scan</button>
+              <button type="button" class="btn" id="scan-next" data-role="button">Next scan</button>
+              <button type="button" class="btn" id="scan-new" data-role="button">New scan</button>
+              <button type="button" class="btn" id="scan-undo" data-role="button">Undo</button>
+              <button type="button" class="btn btn-danger" id="scan-cancel" data-role="button">Cancel scan</button>
+            </div>
+          </div>
+          <p class="hint">Blank range = all readable host memory. UTF text is not trimmed. AOB: hex bytes / ?? wildcard. Width 0 infers an exact value.</p>
+        </div>
+
+        <div class="card">
+          <div class="progress-row">
+            <span class="progress-label" id="scan-progress-label" data-role="label">Scan: idle | No committed scan</span>
+            <div class="progress" id="scan-progress" data-role="progress" role="progressbar" aria-label="Scan progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span class="progress-fill"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-table">
+          <table class="data-table" id="results-list" data-role="list">
+            <colgroup><col class="col-3"><col class="col-5"><col></colgroup>
+            <thead>
+              <tr><th>Result #</th><th>Address</th><th>Typed value at last scan</th></tr>
+            </thead>
+            <tbody>
+              <tr class="is-placeholder"><td>--</td><td>--</td><td>--</td></tr>
+              <tr class="is-placeholder"><td>--</td><td>--</td><td>--</td></tr>
+              <tr class="is-placeholder"><td>--</td><td>--</td><td>--</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="paging">
+          <span class="paging-label" id="results-page" data-role="label">Results: 0 total | 512/page</span>
+          <div class="paging-actions">
+            <button type="button" class="btn btn-quiet" id="results-prev" data-role="button">Previous</button>
+            <button type="button" class="btn btn-quiet" id="results-next" data-role="button">Next page</button>
+            <button type="button" class="btn btn-quiet" id="results-refresh" data-role="button">Refresh</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ page 1: Address list ============ -->
+      <section class="page is-hidden" id="page-address" data-page-index="1" data-banner="Address library" hidden>
+        <div class="card">
+          <div class="fields">
+
+            <div class="field-row">
+              <label class="field field-w-xl">
+                <span class="field-label">Base / expression</span>
+                <input class="field-input mono" type="text" id="address-base" data-role="text" value="">
+              </label>
+              <label class="field field-w-xl">
+                <span class="field-label">Offsets (signed hex)</span>
+                <input class="field-input mono" type="text" id="address-offsets" data-role="text" value="">
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-md field-select">
+                <span class="field-label">Value type</span>
+                <select class="field-input" id="address-type" data-role="combo">
+                  <option value="0">Byte</option>
+                  <option value="1">2 Bytes</option>
+                  <option value="2" selected>4 Bytes</option>
+                  <option value="3">8 Bytes</option>
+                  <option value="4">Float</option>
+                  <option value="5">Double</option>
+                  <option value="6">UTF-8</option>
+                  <option value="7">UTF-16</option>
+                  <option value="8">Array of bytes</option>
+                </select>
+              </label>
+              <label class="field field-check">
+                <span class="field-label">Signed</span>
+                <input type="checkbox" id="address-signed" data-role="check" checked>
+              </label>
+              <label class="field field-check">
+                <span class="field-label">Hex</span>
+                <input type="checkbox" id="address-hex" data-role="check">
+              </label>
+              <label class="field field-w-xs">
+                <span class="field-label">Bytes (0=auto)</span>
+                <input class="field-input mono" type="text" id="address-length" data-role="text" value="0">
+              </label>
+              <button type="button" class="btn" id="address-read" data-role="button">Read</button>
+              <button type="button" class="btn" id="address-write" data-role="button">Write address</button>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-2xl">
+                <span class="field-label">Description</span>
+                <input class="field-input" type="text" id="address-description" data-role="text" value="">
+              </label>
+              <label class="field field-w-lg">
+                <span class="field-label">Value</span>
+                <input class="field-input" type="text" id="address-value" data-role="text" value="0">
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-check">
+                <span class="field-label">Snapshot memory on Add/Update</span>
+                <input type="checkbox" id="address-snapshot" data-role="check" checked>
+              </label>
+              <button type="button" class="btn btn-primary" id="address-add" data-role="button">Add record</button>
+              <button type="button" class="btn" id="address-update" data-role="button">Update selected</button>
+              <span class="readout" id="address-selected" data-role="label">Selected record ID: none</span>
+            </div>
+
+            <div class="field-row field-actions">
+              <button type="button" class="btn btn-primary" id="record-write" data-role="button">Write selected</button>
+              <button type="button" class="btn" id="record-freeze-on" data-role="button">Freeze ON</button>
+              <button type="button" class="btn" id="record-freeze-off" data-role="button">Freeze OFF</button>
+              <button type="button" class="btn btn-danger" id="record-remove" data-role="button">Remove selected</button>
+              <button type="button" class="btn" id="record-save" data-role="button">Save CT...</button>
+              <button type="button" class="btn" id="record-open" data-role="button">Open CT...</button>
+            </div>
+
+            <div class="field-row">
+              <span class="readout readout-wide" id="address-current" data-role="label">Current value: double-click a result, press Enter, select a record, or enter an address and Read.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-table">
+          <table class="data-table" id="records-list" data-role="list">
+            <colgroup><col class="col-3"><col class="col-8"><col class="col-5"><col class="col-4"><col class="col-2"><col class="col-6"><col></colgroup>
+            <thead>
+              <tr><th>Record ID</th><th>Description</th><th>Resolved address</th><th>Type</th><th>Frozen</th><th>Last core status</th><th>Current value</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="paging">
+          <span class="paging-label" id="records-page" data-role="label">Records: 0</span>
+          <div class="paging-actions">
+            <button type="button" class="btn btn-quiet" id="records-prev" data-role="button">Previous</button>
+            <button type="button" class="btn btn-quiet" id="records-next" data-role="button">Next page</button>
+            <button type="button" class="btn btn-quiet" id="records-refresh" data-role="button">Refresh</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="hint">Offsets run left to right, each one dereferences the previous address; a blank list means the base is the final address.</p>
+          <p class="hint">Freeze re-resolves every tick and rewrites the recorded value; Stop ends the session, never the host.</p>
+        </div>
+      </section>
+
+      <!-- ============ page 2: Memory preview ============ -->
+      <section class="page is-hidden" id="page-memory" data-page-index="2" data-banner="Memory preview" hidden>
+        <div class="card">
+          <div class="fields">
+
+            <div class="field-row">
+              <label class="field field-w-xl">
+                <span class="field-label">Base / expression</span>
+                <input class="field-input mono" type="text" id="memory-base" data-role="text" value="">
+              </label>
+              <label class="field field-w-md field-select">
+                <span class="field-label">Display type</span>
+                <select class="field-input" id="memory-type" data-role="combo">
+                  <option value="0" selected>Byte</option>
+                  <option value="1">Byte (decimal)</option>
+                  <option value="2">2 Bytes</option>
+                  <option value="3">2 Bytes (decimal)</option>
+                  <option value="4">4 Bytes</option>
+                  <option value="5">4 Bytes (decimal)</option>
+                  <option value="6">8 Bytes</option>
+                  <option value="7">8 Bytes (decimal)</option>
+                  <option value="8">Float</option>
+                  <option value="9">Double</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-xl">
+                <span class="field-label">Offsets (signed hex)</span>
+                <input class="field-input mono" type="text" id="memory-offsets" data-role="text" value="">
+              </label>
+              <button type="button" class="btn btn-primary" id="memory-resolve" data-role="button">Resolve + preview</button>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-xs">
+                <span class="field-label">Fill byte</span>
+                <input class="field-input mono" type="text" id="memory-fill-byte" data-role="text" value="00">
+              </label>
+              <button type="button" class="btn" id="memory-fill" data-role="button">Fill selection</button>
+            </div>
+
+            <div class="field-row field-actions">
+              <button type="button" class="btn" id="memory-prev" data-role="button">Previous 256</button>
+              <button type="button" class="btn" id="memory-next" data-role="button">Next 256</button>
+              <button type="button" class="btn" id="memory-refresh" data-role="button">Refresh page</button>
+              <button type="button" class="btn btn-quiet" id="memory-back" data-role="button">Back</button>
+              <button type="button" class="btn btn-quiet" id="memory-forward" data-role="button">Forward</button>
+              <button type="button" class="btn btn-quiet" id="memory-undo" data-role="button">Undo write</button>
+            </div>
+
+            <div class="field-row">
+              <span class="readout readout-wide" id="memory-page" data-role="label">Resolved base: none | Page: none</span>
+            </div>
+          </div>
+          <p class="hint">256-byte hex / ASCII snapshot. ?? marks unreadable bytes. Offsets use execution order; this is not a pointer scanner or disassembler.</p>
+        </div>
+
+        <div class="card card-flush">
+          <div class="hex" id="memory-hex" aria-label="Memory snapshot">
+            <span class="hex-head">Address</span>
+            <span class="hex-head hex-head-bytes">Hex bytes</span>
+            <span class="hex-head hex-head-spacer" aria-hidden="true"></span>
+            <span class="hex-head hex-head-ascii">ASCII</span>
+            <span class="hex-addr" data-row="0">0x0000000000000000</span><b class="hex-cell" data-offset="0">00</b><b class="hex-cell" data-offset="1">00</b><b class="hex-cell" data-offset="2">00</b><b class="hex-cell" data-offset="3">00</b><b class="hex-cell" data-offset="4">00</b><b class="hex-cell" data-offset="5">00</b><b class="hex-cell" data-offset="6">00</b><b class="hex-cell" data-offset="7">00</b><b class="hex-cell" data-offset="8">00</b><b class="hex-cell" data-offset="9">00</b><b class="hex-cell" data-offset="10">00</b><b class="hex-cell" data-offset="11">00</b><b class="hex-cell" data-offset="12">00</b><b class="hex-cell" data-offset="13">00</b><b class="hex-cell" data-offset="14">00</b><b class="hex-cell" data-offset="15">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="0">.</i><i class="ascii-cell" data-offset="1">.</i><i class="ascii-cell" data-offset="2">.</i><i class="ascii-cell" data-offset="3">.</i><i class="ascii-cell" data-offset="4">.</i><i class="ascii-cell" data-offset="5">.</i><i class="ascii-cell" data-offset="6">.</i><i class="ascii-cell" data-offset="7">.</i><i class="ascii-cell" data-offset="8">.</i><i class="ascii-cell" data-offset="9">.</i><i class="ascii-cell" data-offset="10">.</i><i class="ascii-cell" data-offset="11">.</i><i class="ascii-cell" data-offset="12">.</i><i class="ascii-cell" data-offset="13">.</i><i class="ascii-cell" data-offset="14">.</i><i class="ascii-cell" data-offset="15">.</i>
+            <span class="hex-addr" data-row="1">0x0000000000000010</span><b class="hex-cell" data-offset="16">00</b><b class="hex-cell" data-offset="17">00</b><b class="hex-cell" data-offset="18">00</b><b class="hex-cell" data-offset="19">00</b><b class="hex-cell" data-offset="20">00</b><b class="hex-cell" data-offset="21">00</b><b class="hex-cell" data-offset="22">00</b><b class="hex-cell" data-offset="23">00</b><b class="hex-cell" data-offset="24">00</b><b class="hex-cell" data-offset="25">00</b><b class="hex-cell" data-offset="26">00</b><b class="hex-cell" data-offset="27">00</b><b class="hex-cell" data-offset="28">00</b><b class="hex-cell" data-offset="29">00</b><b class="hex-cell" data-offset="30">00</b><b class="hex-cell" data-offset="31">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="16">.</i><i class="ascii-cell" data-offset="17">.</i><i class="ascii-cell" data-offset="18">.</i><i class="ascii-cell" data-offset="19">.</i><i class="ascii-cell" data-offset="20">.</i><i class="ascii-cell" data-offset="21">.</i><i class="ascii-cell" data-offset="22">.</i><i class="ascii-cell" data-offset="23">.</i><i class="ascii-cell" data-offset="24">.</i><i class="ascii-cell" data-offset="25">.</i><i class="ascii-cell" data-offset="26">.</i><i class="ascii-cell" data-offset="27">.</i><i class="ascii-cell" data-offset="28">.</i><i class="ascii-cell" data-offset="29">.</i><i class="ascii-cell" data-offset="30">.</i><i class="ascii-cell" data-offset="31">.</i>
+            <span class="hex-addr" data-row="2">0x0000000000000020</span><b class="hex-cell" data-offset="32">00</b><b class="hex-cell" data-offset="33">00</b><b class="hex-cell" data-offset="34">00</b><b class="hex-cell" data-offset="35">00</b><b class="hex-cell" data-offset="36">00</b><b class="hex-cell" data-offset="37">00</b><b class="hex-cell" data-offset="38">00</b><b class="hex-cell" data-offset="39">00</b><b class="hex-cell" data-offset="40">00</b><b class="hex-cell" data-offset="41">00</b><b class="hex-cell" data-offset="42">00</b><b class="hex-cell" data-offset="43">00</b><b class="hex-cell" data-offset="44">00</b><b class="hex-cell" data-offset="45">00</b><b class="hex-cell" data-offset="46">00</b><b class="hex-cell" data-offset="47">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="32">.</i><i class="ascii-cell" data-offset="33">.</i><i class="ascii-cell" data-offset="34">.</i><i class="ascii-cell" data-offset="35">.</i><i class="ascii-cell" data-offset="36">.</i><i class="ascii-cell" data-offset="37">.</i><i class="ascii-cell" data-offset="38">.</i><i class="ascii-cell" data-offset="39">.</i><i class="ascii-cell" data-offset="40">.</i><i class="ascii-cell" data-offset="41">.</i><i class="ascii-cell" data-offset="42">.</i><i class="ascii-cell" data-offset="43">.</i><i class="ascii-cell" data-offset="44">.</i><i class="ascii-cell" data-offset="45">.</i><i class="ascii-cell" data-offset="46">.</i><i class="ascii-cell" data-offset="47">.</i>
+            <span class="hex-addr" data-row="3">0x0000000000000030</span><b class="hex-cell" data-offset="48">00</b><b class="hex-cell" data-offset="49">00</b><b class="hex-cell" data-offset="50">00</b><b class="hex-cell" data-offset="51">00</b><b class="hex-cell" data-offset="52">00</b><b class="hex-cell" data-offset="53">00</b><b class="hex-cell" data-offset="54">00</b><b class="hex-cell" data-offset="55">00</b><b class="hex-cell" data-offset="56">00</b><b class="hex-cell" data-offset="57">00</b><b class="hex-cell" data-offset="58">00</b><b class="hex-cell" data-offset="59">00</b><b class="hex-cell" data-offset="60">00</b><b class="hex-cell" data-offset="61">00</b><b class="hex-cell" data-offset="62">00</b><b class="hex-cell" data-offset="63">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="48">.</i><i class="ascii-cell" data-offset="49">.</i><i class="ascii-cell" data-offset="50">.</i><i class="ascii-cell" data-offset="51">.</i><i class="ascii-cell" data-offset="52">.</i><i class="ascii-cell" data-offset="53">.</i><i class="ascii-cell" data-offset="54">.</i><i class="ascii-cell" data-offset="55">.</i><i class="ascii-cell" data-offset="56">.</i><i class="ascii-cell" data-offset="57">.</i><i class="ascii-cell" data-offset="58">.</i><i class="ascii-cell" data-offset="59">.</i><i class="ascii-cell" data-offset="60">.</i><i class="ascii-cell" data-offset="61">.</i><i class="ascii-cell" data-offset="62">.</i><i class="ascii-cell" data-offset="63">.</i>
+            <span class="hex-addr" data-row="4">0x0000000000000040</span><b class="hex-cell" data-offset="64">00</b><b class="hex-cell" data-offset="65">00</b><b class="hex-cell" data-offset="66">00</b><b class="hex-cell" data-offset="67">00</b><b class="hex-cell" data-offset="68">00</b><b class="hex-cell" data-offset="69">00</b><b class="hex-cell" data-offset="70">00</b><b class="hex-cell" data-offset="71">00</b><b class="hex-cell" data-offset="72">00</b><b class="hex-cell" data-offset="73">00</b><b class="hex-cell" data-offset="74">00</b><b class="hex-cell" data-offset="75">00</b><b class="hex-cell" data-offset="76">00</b><b class="hex-cell" data-offset="77">00</b><b class="hex-cell" data-offset="78">00</b><b class="hex-cell" data-offset="79">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="64">.</i><i class="ascii-cell" data-offset="65">.</i><i class="ascii-cell" data-offset="66">.</i><i class="ascii-cell" data-offset="67">.</i><i class="ascii-cell" data-offset="68">.</i><i class="ascii-cell" data-offset="69">.</i><i class="ascii-cell" data-offset="70">.</i><i class="ascii-cell" data-offset="71">.</i><i class="ascii-cell" data-offset="72">.</i><i class="ascii-cell" data-offset="73">.</i><i class="ascii-cell" data-offset="74">.</i><i class="ascii-cell" data-offset="75">.</i><i class="ascii-cell" data-offset="76">.</i><i class="ascii-cell" data-offset="77">.</i><i class="ascii-cell" data-offset="78">.</i><i class="ascii-cell" data-offset="79">.</i>
+            <span class="hex-addr" data-row="5">0x0000000000000050</span><b class="hex-cell" data-offset="80">00</b><b class="hex-cell" data-offset="81">00</b><b class="hex-cell" data-offset="82">00</b><b class="hex-cell" data-offset="83">00</b><b class="hex-cell" data-offset="84">00</b><b class="hex-cell" data-offset="85">00</b><b class="hex-cell" data-offset="86">00</b><b class="hex-cell" data-offset="87">00</b><b class="hex-cell" data-offset="88">00</b><b class="hex-cell" data-offset="89">00</b><b class="hex-cell" data-offset="90">00</b><b class="hex-cell" data-offset="91">00</b><b class="hex-cell" data-offset="92">00</b><b class="hex-cell" data-offset="93">00</b><b class="hex-cell" data-offset="94">00</b><b class="hex-cell" data-offset="95">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="80">.</i><i class="ascii-cell" data-offset="81">.</i><i class="ascii-cell" data-offset="82">.</i><i class="ascii-cell" data-offset="83">.</i><i class="ascii-cell" data-offset="84">.</i><i class="ascii-cell" data-offset="85">.</i><i class="ascii-cell" data-offset="86">.</i><i class="ascii-cell" data-offset="87">.</i><i class="ascii-cell" data-offset="88">.</i><i class="ascii-cell" data-offset="89">.</i><i class="ascii-cell" data-offset="90">.</i><i class="ascii-cell" data-offset="91">.</i><i class="ascii-cell" data-offset="92">.</i><i class="ascii-cell" data-offset="93">.</i><i class="ascii-cell" data-offset="94">.</i><i class="ascii-cell" data-offset="95">.</i>
+            <span class="hex-addr" data-row="6">0x0000000000000060</span><b class="hex-cell" data-offset="96">00</b><b class="hex-cell" data-offset="97">00</b><b class="hex-cell" data-offset="98">00</b><b class="hex-cell" data-offset="99">00</b><b class="hex-cell" data-offset="100">00</b><b class="hex-cell" data-offset="101">00</b><b class="hex-cell" data-offset="102">00</b><b class="hex-cell" data-offset="103">00</b><b class="hex-cell" data-offset="104">00</b><b class="hex-cell" data-offset="105">00</b><b class="hex-cell" data-offset="106">00</b><b class="hex-cell" data-offset="107">00</b><b class="hex-cell" data-offset="108">00</b><b class="hex-cell" data-offset="109">00</b><b class="hex-cell" data-offset="110">00</b><b class="hex-cell" data-offset="111">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="96">.</i><i class="ascii-cell" data-offset="97">.</i><i class="ascii-cell" data-offset="98">.</i><i class="ascii-cell" data-offset="99">.</i><i class="ascii-cell" data-offset="100">.</i><i class="ascii-cell" data-offset="101">.</i><i class="ascii-cell" data-offset="102">.</i><i class="ascii-cell" data-offset="103">.</i><i class="ascii-cell" data-offset="104">.</i><i class="ascii-cell" data-offset="105">.</i><i class="ascii-cell" data-offset="106">.</i><i class="ascii-cell" data-offset="107">.</i><i class="ascii-cell" data-offset="108">.</i><i class="ascii-cell" data-offset="109">.</i><i class="ascii-cell" data-offset="110">.</i><i class="ascii-cell" data-offset="111">.</i>
+            <span class="hex-addr" data-row="7">0x0000000000000070</span><b class="hex-cell" data-offset="112">00</b><b class="hex-cell" data-offset="113">00</b><b class="hex-cell" data-offset="114">00</b><b class="hex-cell" data-offset="115">00</b><b class="hex-cell" data-offset="116">00</b><b class="hex-cell" data-offset="117">00</b><b class="hex-cell" data-offset="118">00</b><b class="hex-cell" data-offset="119">00</b><b class="hex-cell" data-offset="120">00</b><b class="hex-cell" data-offset="121">00</b><b class="hex-cell" data-offset="122">00</b><b class="hex-cell" data-offset="123">00</b><b class="hex-cell" data-offset="124">00</b><b class="hex-cell" data-offset="125">00</b><b class="hex-cell" data-offset="126">00</b><b class="hex-cell" data-offset="127">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="112">.</i><i class="ascii-cell" data-offset="113">.</i><i class="ascii-cell" data-offset="114">.</i><i class="ascii-cell" data-offset="115">.</i><i class="ascii-cell" data-offset="116">.</i><i class="ascii-cell" data-offset="117">.</i><i class="ascii-cell" data-offset="118">.</i><i class="ascii-cell" data-offset="119">.</i><i class="ascii-cell" data-offset="120">.</i><i class="ascii-cell" data-offset="121">.</i><i class="ascii-cell" data-offset="122">.</i><i class="ascii-cell" data-offset="123">.</i><i class="ascii-cell" data-offset="124">.</i><i class="ascii-cell" data-offset="125">.</i><i class="ascii-cell" data-offset="126">.</i><i class="ascii-cell" data-offset="127">.</i>
+            <span class="hex-addr" data-row="8">0x0000000000000080</span><b class="hex-cell" data-offset="128">00</b><b class="hex-cell" data-offset="129">00</b><b class="hex-cell" data-offset="130">00</b><b class="hex-cell" data-offset="131">00</b><b class="hex-cell" data-offset="132">00</b><b class="hex-cell" data-offset="133">00</b><b class="hex-cell" data-offset="134">00</b><b class="hex-cell" data-offset="135">00</b><b class="hex-cell" data-offset="136">00</b><b class="hex-cell" data-offset="137">00</b><b class="hex-cell" data-offset="138">00</b><b class="hex-cell" data-offset="139">00</b><b class="hex-cell" data-offset="140">00</b><b class="hex-cell" data-offset="141">00</b><b class="hex-cell" data-offset="142">00</b><b class="hex-cell" data-offset="143">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="128">.</i><i class="ascii-cell" data-offset="129">.</i><i class="ascii-cell" data-offset="130">.</i><i class="ascii-cell" data-offset="131">.</i><i class="ascii-cell" data-offset="132">.</i><i class="ascii-cell" data-offset="133">.</i><i class="ascii-cell" data-offset="134">.</i><i class="ascii-cell" data-offset="135">.</i><i class="ascii-cell" data-offset="136">.</i><i class="ascii-cell" data-offset="137">.</i><i class="ascii-cell" data-offset="138">.</i><i class="ascii-cell" data-offset="139">.</i><i class="ascii-cell" data-offset="140">.</i><i class="ascii-cell" data-offset="141">.</i><i class="ascii-cell" data-offset="142">.</i><i class="ascii-cell" data-offset="143">.</i>
+            <span class="hex-addr" data-row="9">0x0000000000000090</span><b class="hex-cell" data-offset="144">00</b><b class="hex-cell" data-offset="145">00</b><b class="hex-cell" data-offset="146">00</b><b class="hex-cell" data-offset="147">00</b><b class="hex-cell" data-offset="148">00</b><b class="hex-cell" data-offset="149">00</b><b class="hex-cell" data-offset="150">00</b><b class="hex-cell" data-offset="151">00</b><b class="hex-cell" data-offset="152">00</b><b class="hex-cell" data-offset="153">00</b><b class="hex-cell" data-offset="154">00</b><b class="hex-cell" data-offset="155">00</b><b class="hex-cell" data-offset="156">00</b><b class="hex-cell" data-offset="157">00</b><b class="hex-cell" data-offset="158">00</b><b class="hex-cell" data-offset="159">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="144">.</i><i class="ascii-cell" data-offset="145">.</i><i class="ascii-cell" data-offset="146">.</i><i class="ascii-cell" data-offset="147">.</i><i class="ascii-cell" data-offset="148">.</i><i class="ascii-cell" data-offset="149">.</i><i class="ascii-cell" data-offset="150">.</i><i class="ascii-cell" data-offset="151">.</i><i class="ascii-cell" data-offset="152">.</i><i class="ascii-cell" data-offset="153">.</i><i class="ascii-cell" data-offset="154">.</i><i class="ascii-cell" data-offset="155">.</i><i class="ascii-cell" data-offset="156">.</i><i class="ascii-cell" data-offset="157">.</i><i class="ascii-cell" data-offset="158">.</i><i class="ascii-cell" data-offset="159">.</i>
+            <span class="hex-addr" data-row="10">0x00000000000000a0</span><b class="hex-cell" data-offset="160">00</b><b class="hex-cell" data-offset="161">00</b><b class="hex-cell" data-offset="162">00</b><b class="hex-cell" data-offset="163">00</b><b class="hex-cell" data-offset="164">00</b><b class="hex-cell" data-offset="165">00</b><b class="hex-cell" data-offset="166">00</b><b class="hex-cell" data-offset="167">00</b><b class="hex-cell" data-offset="168">00</b><b class="hex-cell" data-offset="169">00</b><b class="hex-cell" data-offset="170">00</b><b class="hex-cell" data-offset="171">00</b><b class="hex-cell" data-offset="172">00</b><b class="hex-cell" data-offset="173">00</b><b class="hex-cell" data-offset="174">00</b><b class="hex-cell" data-offset="175">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="160">.</i><i class="ascii-cell" data-offset="161">.</i><i class="ascii-cell" data-offset="162">.</i><i class="ascii-cell" data-offset="163">.</i><i class="ascii-cell" data-offset="164">.</i><i class="ascii-cell" data-offset="165">.</i><i class="ascii-cell" data-offset="166">.</i><i class="ascii-cell" data-offset="167">.</i><i class="ascii-cell" data-offset="168">.</i><i class="ascii-cell" data-offset="169">.</i><i class="ascii-cell" data-offset="170">.</i><i class="ascii-cell" data-offset="171">.</i><i class="ascii-cell" data-offset="172">.</i><i class="ascii-cell" data-offset="173">.</i><i class="ascii-cell" data-offset="174">.</i><i class="ascii-cell" data-offset="175">.</i>
+            <span class="hex-addr" data-row="11">0x00000000000000b0</span><b class="hex-cell" data-offset="176">00</b><b class="hex-cell" data-offset="177">00</b><b class="hex-cell" data-offset="178">00</b><b class="hex-cell" data-offset="179">00</b><b class="hex-cell" data-offset="180">00</b><b class="hex-cell" data-offset="181">00</b><b class="hex-cell" data-offset="182">00</b><b class="hex-cell" data-offset="183">00</b><b class="hex-cell" data-offset="184">00</b><b class="hex-cell" data-offset="185">00</b><b class="hex-cell" data-offset="186">00</b><b class="hex-cell" data-offset="187">00</b><b class="hex-cell" data-offset="188">00</b><b class="hex-cell" data-offset="189">00</b><b class="hex-cell" data-offset="190">00</b><b class="hex-cell" data-offset="191">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="176">.</i><i class="ascii-cell" data-offset="177">.</i><i class="ascii-cell" data-offset="178">.</i><i class="ascii-cell" data-offset="179">.</i><i class="ascii-cell" data-offset="180">.</i><i class="ascii-cell" data-offset="181">.</i><i class="ascii-cell" data-offset="182">.</i><i class="ascii-cell" data-offset="183">.</i><i class="ascii-cell" data-offset="184">.</i><i class="ascii-cell" data-offset="185">.</i><i class="ascii-cell" data-offset="186">.</i><i class="ascii-cell" data-offset="187">.</i><i class="ascii-cell" data-offset="188">.</i><i class="ascii-cell" data-offset="189">.</i><i class="ascii-cell" data-offset="190">.</i><i class="ascii-cell" data-offset="191">.</i>
+            <span class="hex-addr" data-row="12">0x00000000000000c0</span><b class="hex-cell" data-offset="192">00</b><b class="hex-cell" data-offset="193">00</b><b class="hex-cell" data-offset="194">00</b><b class="hex-cell" data-offset="195">00</b><b class="hex-cell" data-offset="196">00</b><b class="hex-cell" data-offset="197">00</b><b class="hex-cell" data-offset="198">00</b><b class="hex-cell" data-offset="199">00</b><b class="hex-cell" data-offset="200">00</b><b class="hex-cell" data-offset="201">00</b><b class="hex-cell" data-offset="202">00</b><b class="hex-cell" data-offset="203">00</b><b class="hex-cell" data-offset="204">00</b><b class="hex-cell" data-offset="205">00</b><b class="hex-cell" data-offset="206">00</b><b class="hex-cell" data-offset="207">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="192">.</i><i class="ascii-cell" data-offset="193">.</i><i class="ascii-cell" data-offset="194">.</i><i class="ascii-cell" data-offset="195">.</i><i class="ascii-cell" data-offset="196">.</i><i class="ascii-cell" data-offset="197">.</i><i class="ascii-cell" data-offset="198">.</i><i class="ascii-cell" data-offset="199">.</i><i class="ascii-cell" data-offset="200">.</i><i class="ascii-cell" data-offset="201">.</i><i class="ascii-cell" data-offset="202">.</i><i class="ascii-cell" data-offset="203">.</i><i class="ascii-cell" data-offset="204">.</i><i class="ascii-cell" data-offset="205">.</i><i class="ascii-cell" data-offset="206">.</i><i class="ascii-cell" data-offset="207">.</i>
+            <span class="hex-addr" data-row="13">0x00000000000000d0</span><b class="hex-cell" data-offset="208">00</b><b class="hex-cell" data-offset="209">00</b><b class="hex-cell" data-offset="210">00</b><b class="hex-cell" data-offset="211">00</b><b class="hex-cell" data-offset="212">00</b><b class="hex-cell" data-offset="213">00</b><b class="hex-cell" data-offset="214">00</b><b class="hex-cell" data-offset="215">00</b><b class="hex-cell" data-offset="216">00</b><b class="hex-cell" data-offset="217">00</b><b class="hex-cell" data-offset="218">00</b><b class="hex-cell" data-offset="219">00</b><b class="hex-cell" data-offset="220">00</b><b class="hex-cell" data-offset="221">00</b><b class="hex-cell" data-offset="222">00</b><b class="hex-cell" data-offset="223">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="208">.</i><i class="ascii-cell" data-offset="209">.</i><i class="ascii-cell" data-offset="210">.</i><i class="ascii-cell" data-offset="211">.</i><i class="ascii-cell" data-offset="212">.</i><i class="ascii-cell" data-offset="213">.</i><i class="ascii-cell" data-offset="214">.</i><i class="ascii-cell" data-offset="215">.</i><i class="ascii-cell" data-offset="216">.</i><i class="ascii-cell" data-offset="217">.</i><i class="ascii-cell" data-offset="218">.</i><i class="ascii-cell" data-offset="219">.</i><i class="ascii-cell" data-offset="220">.</i><i class="ascii-cell" data-offset="221">.</i><i class="ascii-cell" data-offset="222">.</i><i class="ascii-cell" data-offset="223">.</i>
+            <span class="hex-addr" data-row="14">0x00000000000000e0</span><b class="hex-cell" data-offset="224">00</b><b class="hex-cell" data-offset="225">00</b><b class="hex-cell" data-offset="226">00</b><b class="hex-cell" data-offset="227">00</b><b class="hex-cell" data-offset="228">00</b><b class="hex-cell" data-offset="229">00</b><b class="hex-cell" data-offset="230">00</b><b class="hex-cell" data-offset="231">00</b><b class="hex-cell" data-offset="232">00</b><b class="hex-cell" data-offset="233">00</b><b class="hex-cell" data-offset="234">00</b><b class="hex-cell" data-offset="235">00</b><b class="hex-cell" data-offset="236">00</b><b class="hex-cell" data-offset="237">00</b><b class="hex-cell" data-offset="238">00</b><b class="hex-cell" data-offset="239">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="224">.</i><i class="ascii-cell" data-offset="225">.</i><i class="ascii-cell" data-offset="226">.</i><i class="ascii-cell" data-offset="227">.</i><i class="ascii-cell" data-offset="228">.</i><i class="ascii-cell" data-offset="229">.</i><i class="ascii-cell" data-offset="230">.</i><i class="ascii-cell" data-offset="231">.</i><i class="ascii-cell" data-offset="232">.</i><i class="ascii-cell" data-offset="233">.</i><i class="ascii-cell" data-offset="234">.</i><i class="ascii-cell" data-offset="235">.</i><i class="ascii-cell" data-offset="236">.</i><i class="ascii-cell" data-offset="237">.</i><i class="ascii-cell" data-offset="238">.</i><i class="ascii-cell" data-offset="239">.</i>
+            <span class="hex-addr" data-row="15">0x00000000000000f0</span><b class="hex-cell" data-offset="240">00</b><b class="hex-cell" data-offset="241">00</b><b class="hex-cell" data-offset="242">00</b><b class="hex-cell" data-offset="243">00</b><b class="hex-cell" data-offset="244">00</b><b class="hex-cell" data-offset="245">00</b><b class="hex-cell" data-offset="246">00</b><b class="hex-cell" data-offset="247">00</b><b class="hex-cell" data-offset="248">00</b><b class="hex-cell" data-offset="249">00</b><b class="hex-cell" data-offset="250">00</b><b class="hex-cell" data-offset="251">00</b><b class="hex-cell" data-offset="252">00</b><b class="hex-cell" data-offset="253">00</b><b class="hex-cell" data-offset="254">00</b><b class="hex-cell" data-offset="255">00</b><span class="hex-spacer" aria-hidden="true"></span><i class="ascii-cell" data-offset="240">.</i><i class="ascii-cell" data-offset="241">.</i><i class="ascii-cell" data-offset="242">.</i><i class="ascii-cell" data-offset="243">.</i><i class="ascii-cell" data-offset="244">.</i><i class="ascii-cell" data-offset="245">.</i><i class="ascii-cell" data-offset="246">.</i><i class="ascii-cell" data-offset="247">.</i><i class="ascii-cell" data-offset="248">.</i><i class="ascii-cell" data-offset="249">.</i><i class="ascii-cell" data-offset="250">.</i><i class="ascii-cell" data-offset="251">.</i><i class="ascii-cell" data-offset="252">.</i><i class="ascii-cell" data-offset="253">.</i><i class="ascii-cell" data-offset="254">.</i><i class="ascii-cell" data-offset="255">.</i>
+          </div>
+          <p class="hex-foot" id="memory-hex-foot" data-role="label">256 bytes requested; 0 unreadable. Snapshot only; no disassembly.</p>
+        </div>
+      </section>
+
+      <!-- ============ page 3: Regions ============ -->
+      <section class="page is-hidden" id="page-regions" data-page-index="3" data-banner="Process regions" hidden>
+        <div class="card">
+          <p class="hint">Address space of this host process in ascending order, including free and reserved ranges. Read-only snapshot taken on Refresh.</p>
+        </div>
+
+        <div class="card card-table">
+          <table class="data-table" id="regions-list" data-role="list">
+            <colgroup><col class="col-6"><col class="col-4"><col class="col-4"><col class="col-5"><col class="col-6"><col class="col-4"></colgroup>
+            <thead>
+              <tr><th>Base</th><th>Size</th><th>State</th><th>Protect</th><th>Allocation protect</th><th>Type</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="paging">
+          <span class="paging-label" id="regions-page" data-role="label">Regions: not loaded</span>
+          <div class="paging-actions">
+            <button type="button" class="btn btn-quiet" id="regions-prev" data-role="button">Previous</button>
+            <button type="button" class="btn btn-quiet" id="regions-next" data-role="button">Next page</button>
+            <button type="button" class="btn btn-primary" id="regions-refresh" data-role="button">Refresh</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ page 4: Modules ============ -->
+      <section class="page is-hidden" id="page-modules" data-page-index="4" data-banner="Loaded modules" hidden>
+        <div class="card">
+          <p class="hint">DLLs and the executable currently mapped into this host process. Read-only; nothing is loaded, unloaded or injected.</p>
+        </div>
+
+        <div class="card card-table">
+          <table class="data-table" id="modules-list" data-role="list">
+            <colgroup><col class="col-6"><col class="col-4"><col class="col-9"><col></colgroup>
+            <thead>
+              <tr><th>Base</th><th>Size</th><th>Name</th><th>Path</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="paging">
+          <span class="paging-label" id="modules-page" data-role="label">Modules: not loaded</span>
+          <div class="paging-actions">
+            <button type="button" class="btn btn-quiet" id="modules-prev" data-role="button">Previous</button>
+            <button type="button" class="btn btn-quiet" id="modules-next" data-role="button">Next page</button>
+            <button type="button" class="btn btn-primary" id="modules-refresh" data-role="button">Refresh</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ page 5: Threads ============ -->
+      <section class="page is-hidden" id="page-threads" data-page-index="5" data-banner="Host threads" hidden>
+        <div class="card">
+          <p class="hint">Threads owned by this host process. Read-only: nothing here can suspend, resume or terminate a thread.</p>
+        </div>
+
+        <div class="card card-table">
+          <table class="data-table" id="threads-list" data-role="list">
+            <colgroup><col class="col-4"><col class="col-3"><col class="col-6"><col><col class="col-4"></colgroup>
+            <thead>
+              <tr><th>Thread ID</th><th>Priority</th><th>Created (UTC)</th><th>Name</th><th>Current</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="paging">
+          <span class="paging-label" id="threads-page" data-role="label">Threads: not loaded</span>
+          <div class="paging-actions">
+            <button type="button" class="btn btn-quiet" id="threads-prev" data-role="button">Previous</button>
+            <button type="button" class="btn btn-quiet" id="threads-next" data-role="button">Next page</button>
+            <button type="button" class="btn btn-primary" id="threads-refresh" data-role="button">Refresh</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ page 6: Pointer scan ============ -->
+      <section class="page is-hidden" id="page-pointer" data-page-index="6" data-banner="Pointer scan" hidden>
+        <div class="card">
+          <div class="fields">
+
+            <div class="field-row">
+              <label class="field field-w-xl">
+                <span class="field-label">Target address</span>
+                <input class="field-input mono" type="text" id="ptr-target" data-role="text" value="">
+              </label>
+              <label class="field field-w-xs field-select">
+                <span class="field-label">Levels</span>
+                <select class="field-input" id="ptr-levels" data-role="combo">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="field-row">
+              <label class="field field-w-sm">
+                <span class="field-label">Max offset (hex)</span>
+                <input class="field-input mono" type="text" id="ptr-offset" data-role="text" value="1000">
+              </label>
+              <label class="field field-w-sm field-select">
+                <span class="field-label">Alignment</span>
+                <select class="field-input" id="ptr-align" data-role="combo">
+                  <option value="1">1 byte(s)</option>
+                  <option value="2">2 byte(s)</option>
+                  <option value="4">4 byte(s)</option>
+                  <option value="8" selected>8 byte(s)</option>
+                </select>
+              </label>
+              <label class="field field-check">
+                <span class="field-label">Static (module) bases only</span>
+                <input type="checkbox" id="ptr-static" data-role="check" checked>
+              </label>
+            </div>
+
+            <div class="field-row field-actions">
+              <button type="button" class="btn btn-primary" id="ptr-scan" data-role="button">Scan</button>
+              <button type="button" class="btn btn-danger" id="ptr-cancel" data-role="button">Cancel</button>
+              <button type="button" class="btn" id="ptr-add" data-role="button">Add to address list</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="progress-row">
+            <span class="progress-label" id="ptr-progress-label" data-role="label">Pointer scan: idle | No results</span>
+            <div class="progress" id="ptr-progress" data-role="progress" role="progressbar" aria-label="Pointer scan progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span class="progress-fill"></span>
+            </div>
+          </div>
+          <p class="hint">Walks pointer chains from static module bases to the target address. Results are stored as records with the offsets in execution order.</p>
+        </div>
+
+        <div class="card card-table">
+          <table class="data-table" id="ptr-list" data-role="list">
+            <colgroup><col class="col-7"><col><col class="col-5"></colgroup>
+            <thead>
+              <tr><th>Base</th><th>Offsets</th><th>Base is static</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="paging">
+          <span class="paging-label" id="ptr-page" data-role="label">Pointer scan: no results</span>
+          <div class="paging-actions">
+            <button type="button" class="btn btn-quiet" id="ptr-prev" data-role="button">Previous</button>
+            <button type="button" class="btn btn-quiet" id="ptr-next" data-role="button">Next page</button>
+            <button type="button" class="btn btn-quiet" id="ptr-refresh" data-role="button">Refresh</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <div class="statusline">
+      <span class="status-tick" aria-hidden="true"></span>
+      <span id="status-line" data-role="label">Ready. Values belong to this host process; scan results are snapshots.</span>
+    </div>
+    <div class="footerline" id="footer-line" data-role="label">Close hides only. Hidden scanning/freezing continues. Stop ends this DLL session, never the host.</div>
+  </main>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

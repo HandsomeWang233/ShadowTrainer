@@ -1,0 +1,21 @@
+Microsoft.Web.WebView2 1.0.4258.31
+===================================
+
+Source: https://nuget.azure.cn/v3-flatcontainer/microsoft.web.webview2/1.0.4258.31/microsoft.web.webview2.1.0.4258.31.nupkg
+        (nuget.org redirects here from mainland China; the file hash is the same package)
+Fetched: 2026-10-01, by tools/fetch-webview2.cmd
+
+Extracted verbatim from the package, nothing else:
+  build/native/include/WebView2.h                     -> include/WebView2.h
+  build/native/include/WebView2EnvironmentOptions.h   -> include/WebView2EnvironmentOptions.h
+  build/native/x64/WebView2LoaderStatic.lib           -> lib/x64/WebView2LoaderStatic.lib
+  LICENSE.txt                                         -> LICENSE.txt
+  NOTICE.txt                                          -> NOTICE.txt
+
+The static loader is deliberate. This DLL is injected into an arbitrary host
+process, so a side-by-side WebView2Loader.dll cannot be relied on; the loader
+code has to live inside shadowtrainer.dll itself. build.cmd fails the build if
+`dumpbin /dependents` shows a WebView2Loader.dll import.
+
+The WebView2 runtime itself is NOT vendored -- the evergeen runtime installed
+machine-wide is used. See docs/WEBUI.md.

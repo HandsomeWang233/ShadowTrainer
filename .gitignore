@@ -1,0 +1,15 @@
+build/
+dist/
+.vs/
+*.user
+*.rsuser
+*.suo
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.tlog
+*.res
+.scratch/
+docs/agents
+AGENTS.md

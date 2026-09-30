@@ -1,0 +1,37 @@
+// Web UI assets, embedded so the shipped DLL needs nothing on disk.
+//
+// RCDATA copies the file bytes verbatim; the server in src/ui/webview_host.cpp
+// assigns the MIME type from its own table, so no code page is declared here.
+// rc.exe resolves the names below through its include path, and build.cmd passes
+// /Iweb, so they are paths relative to this directory.
+//
+// This list grows as modules land; the asset table in src/ui/webview_host.cpp
+// must name the same files, and every text file here must be pure ASCII so
+// rc.exe cannot re-encode it. brand.png and app.ico are binary: RCDATA copies
+// bytes verbatim and ICON is parsed by rc.exe, so neither is re-encoded.
+//
+// These paths are the URLs as well as the files: the page asks the virtual
+// origin for /js/app.js and this file embeds js/app.js, so the table in
+// webview_host.cpp carries one string for both jobs. That also means the page
+// opens straight off disk -- web/index.html in a browser resolves css/app.css
+// and js/app.js the same way the virtual origin does. Keep the three in step:
+// a file named here that is not on disk stops the build, and a path in the
+// table that is not embedded here is a 404 at runtime.
+#include "resource_ids.h"
+
+IDR_WEB_INDEX     RCDATA "index.html"
+IDR_WEB_APP_CSS   RCDATA "css/app.css"
+IDR_WEB_FORMAT_JS RCDATA "js/format.js"
+IDR_WEB_BRIDGE_JS RCDATA "js/bridge.js"
+IDR_WEB_GATING_JS RCDATA "js/gating.js"
+IDR_WEB_CHROME_JS RCDATA "js/chrome.js"
+IDR_WEB_APP_JS    RCDATA "js/app.js"
+IDR_WEB_BOOT_JS   RCDATA "js/boot.js"
+IDR_WEB_SCAN_JS    RCDATA "js/scan.js"
+IDR_WEB_ADDRESS_JS RCDATA "js/address.js"
+IDR_WEB_MEMORY_JS  RCDATA "js/memory.js"
+IDR_WEB_HEXVIEW_JS RCDATA "js/hexview.js"
+IDR_WEB_VIEWS_JS   RCDATA "js/views.js"
+IDR_WEB_POINTER_JS RCDATA "js/pointer.js"
+IDR_WEB_BRAND_PNG RCDATA "img/brand.png"
+IDR_APP_ICON      ICON   "img/app.ico"
