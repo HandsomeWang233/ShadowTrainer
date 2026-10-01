@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-ShadowTrainer 是一款适用于 Windows 的内存扫描器和修改器（Trainer）运行时，以单个 x64 DLL 形式提供。
+ShadowTrainer 是一款适用于 Windows 的内存扫描器和修改器，提供形式为单 x64 DLL。
 将其加载到目标进程后，它会打开独立的窗口，用于扫描、修改和冻结该进程的内存。无需驱动、无需服务、无需辅助程序、不会在宿主程序旁写入任何文件，也无需单独选择目标进程 —— 被加载进的进程**本身就是**目标。
 
 ![内存扫描页图片](docs/img/webui/scan.png)
