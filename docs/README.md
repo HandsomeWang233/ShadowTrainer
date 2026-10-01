@@ -17,12 +17,6 @@ other.
 | [`POLISH.md`](POLISH.md) | One batch of reliability work on already-implemented features, and the durable rules it settled | you are looking for why Undo, the value refresh or the freeze conflict check behaves as it does |
 | [`STATUS.md`](STATUS.md) | Development status, the batch history, the evidence policy and the known gaps | you are picking the project up, or a test is red |
 
-[`agents/`](agents/) holds the three workflow documents that repository
-maintenance skills read: [`domain.md`](agents/domain.md) (how to consume these
-records), [`issue-tracker.md`](agents/issue-tracker.md) (where issues and specs
-live) and [`triage-labels.md`](agents/triage-labels.md) (the label vocabulary).
-They are configuration rather than documentation, and they are in English only.
-
 ## Images
 
 `img/webui/` holds the interface screenshots.

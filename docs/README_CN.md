@@ -16,12 +16,6 @@
 | [`POLISH_CN.md`](POLISH_CN.md) | 针对已实现功能的一批可靠性工作，以及它定下来的长期规则 | 你想弄清 Undo、当前值刷新或冻结冲突检查为什么是现在这个行为时 |
 | [`STATUS_CN.md`](STATUS_CN.md) | 开发状态、批次历史、证据策略与已知缺口 | 你刚接手这个项目，或者某个测试变红时 |
 
-[`agents/`](agents/) 存放三份供仓库维护技能读取的流程文档：
-[`domain_CN.md`](agents/domain_CN.md)（如何使用这些记录）、
-[`issue-tracker_CN.md`](agents/issue-tracker_CN.md)（工单与规格放在哪）以及
-[`triage-labels_CN.md`](agents/triage-labels_CN.md)（标签词表）。
-它们是配置而不是文档：其中被技能解析的字面量（标签名、`Status:` 之类的字段名）在两种语言版本里都保留英文原文。
-
 ## 图片
 
 `img/webui/` 存放界面截图。
