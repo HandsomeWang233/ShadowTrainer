@@ -80,9 +80,7 @@ export function createMemoryPage(ctx) {
     if (cell.textContent !== text) cell.textContent = text;
     const bad = !page || !cellEditable(offset, count);
     cell.classList.toggle('unreadable', bad);
-    cell.classList.toggle('is-unreadable', bad);
     cell.classList.toggle('staged', stagedHere);
-    cell.classList.toggle('is-staged', stagedHere);
     cell.classList.toggle('selected', caret === offset);
     cell.classList.toggle('is-selected-range', inSelection(offset));
   }
@@ -95,7 +93,6 @@ export function createMemoryPage(ctx) {
     if (cell.textContent !== text) cell.textContent = text;
     const bad = unreadable(offset);
     cell.classList.toggle('unreadable', bad);
-    cell.classList.toggle('is-unreadable', bad);
     cell.classList.toggle('is-selected-range', inSelection(offset));
   }
 

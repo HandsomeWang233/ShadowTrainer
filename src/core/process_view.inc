@@ -65,7 +65,42 @@ int walk_threads(std::vector<CeThreadInfoV2>& out){
         out.push_back(info);entry.dwSize=sizeof(entry);}while(Thread32Next(snapshot.value,&entry));
     return CE_OK;
 }
+// This DLL's own module, taken from one of its functions rather than from a name
+// or a path, so nothing outside can make the answer say something else.
+HMODULE self_module(){
+    static const HMODULE cached=[]{
+        HMODULE module=nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&walk_modules),&module);
+        return module;}();
+    return cached;
+}
 }
 int Core::regions_v2(std::vector<CeRegionInfoV2>& out){return guarded([&]{if(impl_->stopped.load())return impl_->stopped_error();return walk_regions(out);});}
 int Core::modules_v2(std::vector<CeModuleInfoV2>& out){return guarded([&]{if(impl_->stopped.load())return impl_->stopped_error();return walk_modules(out);});}
 int Core::threads_v2(std::vector<CeThreadInfoV2>& out){return guarded([&]{if(impl_->stopped.load())return impl_->stopped_error();return walk_threads(out);});}
+// The one entry here that changes host state rather than describing it, so it is
+// the one with rails. Both refusals are by module handle, not by path: a handle
+// is identity and a path is a string the host could have written.
+int Core::unload_module_v2(uint64_t base) {
+    return guarded([&] {
+        if (impl_->stopped.load()) return impl_->stopped_error();
+        if (!base) return fail(CE_INVALID_ARGUMENT, L"No module base was given.");
+        const HMODULE module = reinterpret_cast<HMODULE>(static_cast<uintptr_t>(base));
+        // Asking which module owns an address is also the validation: Windows
+        // answers with the module that contains it, so an address that is not the
+        // start of a loaded module fails here instead of reaching the loader.
+        HMODULE owner = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                reinterpret_cast<LPCWSTR>(module), &owner) ||
+            owner != module)
+            return fail(CE_INVALID_ARGUMENT, L"That address is not the start of a loaded module.");
+        if (module == GetModuleHandleW(nullptr))
+            return fail(CE_UNSUPPORTED, L"The host executable cannot be unloaded.");
+        if (module == self_module())
+            return fail(CE_UNSUPPORTED, L"ShadowTrainer's own module cannot be unloaded.");
+        if (!FreeLibrary(module)) return win_fail(L"FreeLibrary refused the module.");
+        return int(CE_OK);
+    });
+}

@@ -238,8 +238,34 @@ void test_process_views(){
     for(const auto& t:threads){CHECK(t.size==sizeof(CeThreadInfoV2)&&t.version==CE_V2_VERSION);
         if(t.current){++current;CHECK(t.thread_id==GetCurrentThreadId());}}
     CHECK(current==1);
+    // The unload is the one entry here that acts rather than reads, so its rails
+    // are checked: not a module, the host executable itself, and this module.
+    CHECK(c.unload_module_v2(0)==CE_INVALID_ARGUMENT&&c.unload_module_v2(1)==CE_INVALID_ARGUMENT);
+    CHECK(c.unload_module_v2(main_module)==CE_UNSUPPORTED);
+    // A module this process already holds a reference to releases cleanly: the
+    // count we added is the count we drop, and user32 stays mapped.
+    HMODULE borrowed=LoadLibraryW(L"user32.dll");CHECK(borrowed!=nullptr);
+    CHECK(c.unload_module_v2(reinterpret_cast<uint64_t>(borrowed))==CE_OK);
+    CHECK(GetModuleHandleW(L"user32.dll")!=nullptr);
+    // And the case that matters: a module this process is the ONLY holder of
+    // really unmaps. The copy is loaded from a temporary path, so nothing else
+    // can be using it, and three things have to hold afterwards - the process is
+    // still alive, the enumeration no longer names the base, and the file can be
+    // deleted, which only succeeds once it is no longer mapped.
+    wchar_t temp_dir[MAX_PATH]{}, temp_path[MAX_PATH]{}, system_dir[MAX_PATH]{};
+    GetTempPathW(MAX_PATH,temp_dir);GetTempFileNameW(temp_dir,L"stx",0,temp_path);
+    GetSystemDirectoryW(system_dir,MAX_PATH);
+    const std::wstring source=std::wstring(system_dir)+L"\\version.dll";
+    CHECK(CopyFileW(source.c_str(),temp_path,FALSE));
+    HMODULE owned=LoadLibraryW(temp_path);CHECK(owned!=nullptr);
+    const auto owned_base=reinterpret_cast<uint64_t>(owned);
+    CHECK(c.unload_module_v2(owned_base)==CE_OK);
+    std::vector<CeModuleInfoV2> remaining;CHECK(c.modules_v2(remaining)==CE_OK);
+    bool listed=false;for(const auto& m:remaining)listed|=m.base==owned_base;
+    CHECK(!listed);
+    CHECK(DeleteFileW(temp_path)!=0);
     // A stopped core refuses the views like every other operation.
-    c.shutdown();CHECK(c.regions_v2(regions)==CE_NOT_RUNNING&&c.modules_v2(modules)==CE_NOT_RUNNING&&c.threads_v2(threads)==CE_NOT_RUNNING);
+    c.shutdown();CHECK(c.regions_v2(regions)==CE_NOT_RUNNING&&c.modules_v2(modules)==CE_NOT_RUNNING&&c.threads_v2(threads)==CE_NOT_RUNNING&&c.unload_module_v2(0)==CE_NOT_RUNNING);
 }
 void test_ct_id_regression(){
     for(unsigned variant=0;variant<2;++variant){ce::Core c;Memory m(4096);File file;std::string entries=ct_entry(m.address(),"<ID>2</ID>");if(variant)entries+=ct_entry(m.address(16),"<ID>0</ID>")+ct_entry(m.address(32),"");file.put(ct_document(entries));CHECK(c.load_table(file.path.c_str())==CE_OK);auto added=add(c,m.address(64),CE_TYPE_U64,L"7");CHECK(added!=2);CHECK(c.save_table_v2(file.path.c_str())==CE_OK);CHECK(c.load_table_v2(file.path.c_str())==CE_OK);uint64_t count=0;CHECK(c.record_count_v2(count)==CE_OK&&count==(variant?4u:2u));std::set<uint64_t> ids;bool original=false,created=false;for(uint64_t i=0;i<count;++i){CeRecordInfoV2 r{};std::wstring description;CHECK(c.record_v2(i,r,description)==CE_OK&&r.id&&ids.insert(r.id).second);original|=r.id==2;created|=r.id==added;}CHECK(original&&created);CHECK(c.save_table_v2(file.path.c_str())==CE_OK);CHECK(c.load_table_v2(file.path.c_str())==CE_OK);}

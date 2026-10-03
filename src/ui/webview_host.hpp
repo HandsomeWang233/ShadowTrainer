@@ -32,9 +32,9 @@ public:
     Host(const Host&) = delete;
     Host& operator=(const Host&) = delete;
 
-    // Starts the asynchronous environment creation. Returns false only when the
-    // runtime is missing or the window/module is unusable; an asynchronous
-    // failure after that is reported through failed().
+    // Starts the asynchronous environment creation. Returns false when no
+    // writable user data folder can be located, or the environment cannot be
+    // created; an asynchronous failure after that is reported through failed().
     //
     // With hold_visible the controller stays hidden once it is ready, so the
     // window can play its own startup cover without the page appearing behind

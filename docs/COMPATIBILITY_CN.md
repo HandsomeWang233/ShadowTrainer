@@ -230,9 +230,9 @@ V1 路径（`CE_SaveTable`/`CE_LoadTable`）享受不到上述任何一条，仍
 
 每个文件 8 MiB，10000 条记录，描述 4096 个字符。这些是表的限制，不是扫描结果数量的限制。究竟哪些字段可接受，由源码和测试定义；并不声称任意旧的 CT 文件都普遍兼容。
 
-## 进程视图（只读）
+## 进程视图
 
-`CE_GetRegionsV2` / `CE_GetModulesV2` / `CE_GetThreadsV2` 每次调用各返回一个一致的快照——没有代际、缓存或刷新握手。
+`CE_GetRegionsV2` / `CE_GetModulesV2` / `CE_GetThreadsV2` 每次调用各返回一个一致的快照——没有代际、缓存或刷新握手。这些快照是只读的；唯一一条改动宿主状态的命令是 `CE_UnloadModuleV2`，写在本节末尾。
 
 | 规则 | 细节 |
 |---|---|
@@ -243,6 +243,17 @@ V1 路径（`CE_SaveTable`/`CE_LoadTable`）享受不到上述任何一条，仍
 | `size`/`version` | **仅作输出**：实现会把它们写进每一个被填充的元素，所以调用方从不预先填充——与 `CeScanRequestV2` 这类输入结构体恰好相反。 |
 
 `src/bridge/ui_bridge.cpp` 用 `static_assert` 把 48/552/168 字节的布局钉死，`runtime_v2_tests` 则在运行时断言它们。
+
+**卸载**
+
+`CE_UnloadModuleV2(uint64_t base)` 释放宿主进程中的一个模块，用模块枚举报出的 `base` 来指名。它是同步的，没有代际：调用方事后重新枚举。
+
+| 规则 | 细节 |
+|---|---|
+| 身份 | base 必须是一个已加载模块的起始地址。`GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, ...)` 在加载器介入之前就回答这个问题；`0` 或指向模块内部的地址返回 `CE_INVALID_ARGUMENT`。 |
+| 拒绝 | 宿主 exe 与本 DLL 返回 `CE_UNSUPPORTED`。其余都会走到 `FreeLibrary`，它也可能反过来拒绝。 |
+| 风险 | 模块可能正在被使用。`FreeLibrary` 可能把另一个线程正在跑的代码解除映射，宿主进程可能就此消失。没有撤销，除了上面两条拒绝之外也没有别的保护。 |
+| 效果 | 只动引用计数。加载了两次的模块需要释放两次；系统或其他组件持有的模块仍然保持映射。 |
 
 **区域**
 

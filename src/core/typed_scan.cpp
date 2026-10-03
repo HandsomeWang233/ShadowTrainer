@@ -8,10 +8,8 @@
 #include "typed_scan.hpp"
 #include "core.hpp"
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cstring>
-#include <limits>
 #include <mutex>
 namespace ce::typed {
 namespace {

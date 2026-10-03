@@ -54,6 +54,10 @@ export function createScanPage(ctx) {
     chrome.setText('results-page', results.label || 'Results: 0 total | 512/page');
     chrome.setText('scan-progress-label',
       (model.scan && model.scan.label) || 'Scan: idle | No committed scan');
+    // Painted here rather than only from an event, so the first render after
+    // `hello` already takes the bar away: an idle session has nothing to draw,
+    // and the markup ships it visible. The pointer page's bar works the same way.
+    chrome.setProgress('scan-progress', model.scan ? model.scan.progress : null);
 
     const rows = model.resultRows || [];
     const count = rows.filter(Boolean).length;
@@ -61,7 +65,7 @@ export function createScanPage(ctx) {
       placeholder();
       return;
     }
-    if (pageStart !== results.start || built !== count || built === -1) {
+    if (pageStart !== results.start || built !== count) {
       build(Number(results.count) || count);
       pageStart = results.start;
     }

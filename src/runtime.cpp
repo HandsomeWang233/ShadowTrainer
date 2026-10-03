@@ -316,6 +316,9 @@ int CE_CALL CE_GetModulesV2(CeModuleInfoV2* modules, uint32_t capacity, uint32_t
 int CE_CALL CE_GetThreadsV2(CeThreadInfoV2* threads, uint32_t capacity, uint32_t* required) {
     return view_export(threads, capacity, required, [](ce::Core& c, std::vector<CeThreadInfoV2>& out) { return c.threads_v2(out); });
 }
+int CE_CALL CE_UnloadModuleV2(uint64_t base) {
+    return invoke([&](ce::Core& c) { return c.unload_module_v2(base); });
+}
 
 int CE_CALL CE_PointerScanV2(const CePointerScanRequestV2* request) {
     if (!valid_v2(request) || !request->levels || request->levels > CE_V2_MAX_POINTER_LEVELS) return CE_INVALID_ARGUMENT;

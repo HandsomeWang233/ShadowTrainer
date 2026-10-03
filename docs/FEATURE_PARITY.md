@@ -51,7 +51,7 @@ Regions, Modules and Threads for the hosting process. All three are read-only.
 | Capability | Status | Acceptance boundary |
 |---|---|---|
 | Memory region list | Implemented | Read-only. Tiles the whole application address range contiguously, including MEM_FREE; base/size/state/protect/allocation-protect/type; protections are never changed. |
-| Module/DLL list | Implemented | Read-only. Toolhelp32 snapshot; base/size/name/path (the path is a fixed 260-character copy and truncates); no load, unload or inject. |
+| Module/DLL list | Implemented | Toolhelp32 snapshot; base/size/name/path (the path is a fixed 260-character copy and truncates). No load or inject; one selected row can be unloaded (`CE_UnloadModuleV2`), which refuses the host executable and this DLL and hands everything else to the loader. |
 | Thread list | Implemented | Read-only. TID/priority/creation time/name/current flag; threads are opened with `THREAD_QUERY_LIMITED_INFORMATION` only, so they **cannot** be suspended or resumed. |
 
 ## Cheat tables and ABI
@@ -90,7 +90,7 @@ Kept visible so the matrix stays honest; none of these is stubbed.
 | Full CT history, LCL, trainer, all hotkeys | Not implemented | Menu shortcuts are not the full hotkey system. |
 | Plugin SDK 6, Mono/CLR/Java, speedhack/D3D | Not implemented | The original user-mode goal is retained. |
 | Local external-process selection, cross-bitness | Not implemented | Distinct from the excluded remote-service item; the three process views act only on the host process itself. |
-| Modifying host state (memory protection, thread suspend/resume, module load/unload) | Not implemented | Explicitly excluded from this batch; read-only is enforced by the OpenThread access mask, not by discipline. |
+| Modifying host state (memory protection, thread suspend/resume, module load) | Not implemented | Explicitly excluded from this batch; the thread list stays read-only by access mask rather than by discipline. Module **unload** is the one exception and lives on the module list. |
 | Driver / DBVM / remote-service exclusive capabilities | Dropped | Explicitly dropped by the user; not part of the release. |
 
 Completing this phase does not mean the refactor is complete; no unimplemented capability is simulated with empty functions or always-succeeding stubs.

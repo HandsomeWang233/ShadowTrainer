@@ -28,8 +28,6 @@ int Core::new_scan_v2() {
         if (impl_->generation == UINT64_MAX) return fail(CE_INTERNAL_ERROR, L"Scan generation exhausted.");
         impl_->active.reset();
         impl_->undo.reset();
-        impl_->active_legacy = false;
-        impl_->undo_legacy = false;
         ++impl_->generation;
         impl_->reset_scan_telemetry(CE_SCAN_IDLE);
         return int(CE_OK);
@@ -46,8 +44,6 @@ int Core::undo_scan_v2() {
         int status = impl_->undo->stamp(impl_->generation + 1);
         if (status != CE_OK) return status;
         impl_->active = std::move(impl_->undo);
-        impl_->active_legacy = impl_->undo_legacy;
-        impl_->undo_legacy = false;
         ++impl_->generation;
         impl_->reset_scan_telemetry(CE_SCAN_COMPLETED);
         return int(CE_OK);

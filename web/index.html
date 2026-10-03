@@ -451,7 +451,7 @@ setTimeout(function () {
       <!-- ============ page 4: Modules ============ -->
       <section class="page is-hidden" id="page-modules" data-page-index="4" data-banner="Loaded modules" hidden>
         <div class="card">
-          <p class="hint">DLLs and the executable currently mapped into this host process. Read-only; nothing is loaded, unloaded or injected.</p>
+          <p class="hint">DLLs and the executable currently mapped into this host process. Select a row and unload it to call FreeLibrary inside the host: the executable and ShadowTrainer itself are refused, anything else is handed to the loader, and a wrong choice can take the process down with it.</p>
         </div>
 
         <div class="card card-table">
@@ -470,6 +470,7 @@ setTimeout(function () {
             <button type="button" class="btn btn-quiet" id="modules-prev" data-role="button">Previous</button>
             <button type="button" class="btn btn-quiet" id="modules-next" data-role="button">Next page</button>
             <button type="button" class="btn btn-primary" id="modules-refresh" data-role="button">Refresh</button>
+            <button type="button" class="btn btn-danger" id="modules-unload" data-role="button">Unload selected</button>
           </div>
         </div>
       </section>
@@ -592,6 +593,19 @@ setTimeout(function () {
     <div class="footerline" id="footer-line" data-role="label">Close hides only. Hidden scanning/freezing continues. Stop ends this DLL session, never the host.</div>
   </main>
 </div>
+
+  <!-- The page's own confirmation dialog; js/modal.js owns it. -->
+  <div class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" hidden>
+    <div class="dialog-scrim" id="dialog-scrim"></div>
+    <div class="dialog-panel">
+      <h2 class="dialog-title" id="dialog-title"></h2>
+      <p class="dialog-body" id="dialog-body"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="dialog-cancel" data-role="button">Cancel</button>
+        <button type="button" class="btn btn-danger" id="dialog-confirm" data-role="button">Confirm</button>
+      </div>
+    </div>
+  </div>
 
 <script type="module" src="js/app.js"></script>
 </body>

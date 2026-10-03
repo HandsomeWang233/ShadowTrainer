@@ -74,19 +74,36 @@ int wmain(int argc, wchar_t** argv) {
             std::printf("BASELINE host alive; DLL not loaded\n");
             return 0;
         }
-        if (argc != 2) { std::fprintf(stderr, "usage: runtime_tests.exe DLL_PATH | --baseline\n"); return 2; }
+        // `--hold N` is a debugging aid, not a check: the window lives from the
+        // load to the stop of one cycle, which is over before the cover ends, so
+        // a plain run never gets past it. Holding the first
+        // window open is how a human watches the cover and the page it reveals.
+        int hold_seconds = 0;
+        const wchar_t* dll_path = nullptr;
+        for (int i = 1; i < argc; ++i) {
+            if (wcscmp(argv[i], L"--hold") == 0 && i + 1 < argc) hold_seconds = _wtoi(argv[++i]);
+            else if (!dll_path) dll_path = argv[i];
+        }
+        if (!dll_path) {
+            std::fprintf(stderr, "usage: runtime_tests.exe DLL_PATH [--hold SECONDS] | --baseline\n");
+            return 2;
+        }
         const auto address = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&sample));
         wchar_t original_cwd[MAX_PATH]{};
         GetCurrentDirectoryW(MAX_PATH, original_cwd);
         for (int cycle = 0; cycle != 3; ++cycle) {
             sample = 123456789;
-            Api api(argv[1]);
+            Api api(dll_path);
             for (int i = 0; i != 200 && api.state() == CE_STARTING; ++i) Sleep(25);
             require(api.state() == CE_RUNNING, "automatic runtime startup");
             require(api.version() == 1 && api.pid() == GetCurrentProcessId(), "ABI and default host PID");
             HWND window = nullptr;
             EnumWindows(find_window, reinterpret_cast<LPARAM>(&window));
             require(window && IsWindowVisible(window), "automatic visible UI");
+            if (cycle == 0 && hold_seconds > 0) {
+                std::printf("holding the first window for %d second(s)\n", hold_seconds);
+                Sleep(static_cast<DWORD>(hold_seconds) * 1000);
+            }
             if (cycle == 0) {
                 auto page = static_cast<int32_t*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
                 require(page != nullptr, "broad-scan fixture allocation");

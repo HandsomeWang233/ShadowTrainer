@@ -29,9 +29,10 @@ enum CeCompareV2 {
 // byte_length=0 infers the size on FIRST exact scan or typed write.
 // Next scans cannot change type/flags/width/alignment; zero length/alignment inherit.
 // First ranges are [begin,end); next refines the committed candidates (range ignored).
-// Rounding applies only to CE_CMP_EXACT on Float/Double; every other comparison and
-// every integer type ignores it. The values run one higher than CE's TRoundingType
-// because 0 has to keep meaning this build's existing exact comparison.
+// Rounding applies only to CE_CMP_EXACT on Float/Double; a nonzero rounding on any
+// other comparison or type is refused with CE_INVALID_ARGUMENT. The values run one
+// higher than CE's TRoundingType because 0 has to keep meaning this build's
+// existing exact comparison.
 enum CeRoundingV2 {
     CE_ROUND_EXACT = 0, CE_ROUND_ROUNDED = 1, CE_ROUND_EXTREME = 2, CE_ROUND_TRUNCATED = 3
 };
@@ -104,6 +105,11 @@ typedef struct CeThreadInfoV2 {
 CE_API int CE_CALL CE_GetRegionsV2(CeRegionInfoV2* regions, uint32_t capacity, uint32_t* required);
 CE_API int CE_CALL CE_GetModulesV2(CeModuleInfoV2* modules, uint32_t capacity, uint32_t* required);
 CE_API int CE_CALL CE_GetThreadsV2(CeThreadInfoV2* threads, uint32_t capacity, uint32_t* required);
+// Unloads one module of the host process, by the base address a module
+// enumeration reported. The host executable and this DLL are refused; anything
+// else is handed to the loader, which may still refuse it, and may unmap code
+// another thread is running. Additive to V2.
+CE_API int CE_CALL CE_UnloadModuleV2(uint64_t base);
 
 // Pointer scan: find multi-level paths from a static base to a target address. The
 // offsets in a result are in EXECUTION order (outermost first), exactly what

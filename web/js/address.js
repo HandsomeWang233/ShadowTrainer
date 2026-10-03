@@ -6,6 +6,7 @@
 // belongs to app.js; a click here only asks the runtime for the selection
 // payload and hands it straight to fillEditor.
 import * as chrome from './chrome.js';
+import { install as installSort, paint as paintSort } from './sort.js';
 
 const CELLS = 7;
 const PLACEHOLDER_ROWS = 3;
@@ -15,6 +16,10 @@ export function createAddressPage(ctx) {
   const body = table.querySelector('tbody');
   let built = -1;          // how many rows the DOM currently holds
   let pageStart = null;    // the page those rows belong to
+
+  // A record sort reads every record, not just the page on screen, so the reply
+  // carries the list's metadata and the rows follow on the next tick.
+  installSort(table, (column) => ctx.run('record.sort', { column }));
 
   function placeholder() {
     if (built === -1 && body.children.length === PLACEHOLDER_ROWS) return;
@@ -41,7 +46,6 @@ export function createAddressPage(ctx) {
     body.replaceChildren();
     for (let i = 0; i < count; i += 1) {
       const tr = document.createElement('tr');
-      tr.dataset.index = String(i);
       for (let c = 0; c < CELLS; c += 1) tr.append(document.createElement('td'));
       tr.addEventListener('click', () => select(i));
       body.append(tr);
@@ -52,6 +56,7 @@ export function createAddressPage(ctx) {
   function render(model) {
     const records = model.records || {};
     chrome.setText('records-page', records.label || 'Records: 0');
+    paintSort(table, records.sortColumn, records.sortDescending);
 
     // fillEditor owns these two readouts; clearing them when the runtime no
     // longer has a selection is the only write this page makes to them.

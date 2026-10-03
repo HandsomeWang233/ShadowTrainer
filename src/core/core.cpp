@@ -74,7 +74,6 @@ struct Handle {
 struct TemporaryFile {
     Handle handle;
     std::wstring path;
-    uint64_t count = 0;
     ~TemporaryFile() {
         handle.close();
         if (!path.empty()) DeleteFileW(path.c_str());
@@ -119,13 +118,6 @@ bool write_exact(HANDLE file, const void* source, DWORD bytes) {
     }
     return true;
 }
-bool seek_file(HANDLE file, uint64_t position) {
-    if (position > static_cast<uint64_t>((std::numeric_limits<LONGLONG>::max)())) return false;
-    LARGE_INTEGER offset{};
-    offset.QuadPart = static_cast<LONGLONG>(position);
-    return SetFilePointerEx(file, offset, nullptr, FILE_BEGIN) != FALSE;
-}
-
 uint64_t pointer_value(const void* p) { return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(p)); }
 
 bool readable_protection(DWORD protection) {
@@ -458,12 +450,10 @@ struct Core::Impl {
     std::mutex scan_mutex;
     std::atomic<bool> stopped{false};
     std::atomic<uint64_t> cancellation{0};
-    std::unique_ptr<TemporaryFile> committed;
     std::vector<StoredRecord> address_records;
     TableExtra table_extra;
     std::unique_ptr<typed::ScanFile> active, undo;
     uint64_t generation = 0, revision = 0, next_record_id = 1;
-    bool active_legacy = false, undo_legacy = false;
 
     // Progress never shares the scan/file-I/O lock. Readers try both mutexes
     // (state, then telemetry) and copy one coherent operation-tagged snapshot.
@@ -567,9 +557,7 @@ struct Core::Impl {
         if (status != CE_OK) return operation.finish(status);
         if (cancelled(epoch)) return operation.finish(cancelled_error());
         undo = std::move(active);
-        undo_legacy = active_legacy;
         active = std::move(pending);
-        active_legacy = legacy;
         ++generation;
         return operation.finish(CE_OK);
     }
@@ -663,7 +651,7 @@ int Core::freeze(uint64_t address, int32_t value, bool enabled) {
             records.push_back(std::move(item));
         } else { found->record.value = value; found->record.frozen = true;found->raw.clear();found->raw_valid=true;found->last_status=CE_OK; }
         ++impl_->revision;
-        // Scheduling does not write now: the runtime's 100 ms tick performs writes.
+        // Scheduling does not write now: the runtime's freeze thread writes every 80 ms.
         return static_cast<int>(CE_OK);
     });
 }
@@ -778,6 +766,6 @@ void Core::shutdown() {
     std::lock_guard scan_lock(impl_->scan_mutex);
     std::lock_guard state_lock(impl_->state_mutex);
     impl_->address_records.clear();
-    impl_->committed.reset();impl_->active.reset();impl_->undo.reset();
+    impl_->active.reset();impl_->undo.reset();
 }
 } // namespace ce

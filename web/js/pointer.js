@@ -6,6 +6,7 @@
 // finished page is fetched once, and entering the page fetches the current one.
 import * as chrome from './chrome.js';
 import { PAGE_SIZE } from './format.js';
+import { install as installSort, paint as paintSort } from './sort.js';
 
 const CELLS = 3;
 const PLACEHOLDER_ROWS = 3;
@@ -13,6 +14,9 @@ const PLACEHOLDER_ROWS = 3;
 export function createPointerPage(ctx) {
   const table = ctx.node('ptr-list');
   const body = table.querySelector('tbody');
+  // A pointer sort reads the whole result set, not the page on screen, so it
+  // answers with the same payload a refresh does.
+  installSort(table, (column) => ctx.run('ptr.sort', { column }, (data) => apply(data)));
   let built = -1;          // how many rows the DOM currently holds
   let pageStart = null;    // the payload page those rows belong to
   let rows = [];           // the rows of the last payload
@@ -49,6 +53,7 @@ export function createPointerPage(ctx) {
     if (!data) return;
     rows = data.rows || [];
     selected = -1;
+    paintSort(table, data.sortColumn, data.sortDescending);
     if (data.label !== undefined) chrome.setText('ptr-page', data.label);
     if (!rows.length) {
       placeholder();
@@ -58,7 +63,6 @@ export function createPointerPage(ctx) {
       body.replaceChildren();
       for (let i = 0; i < rows.length; i += 1) {
         const tr = document.createElement('tr');
-        tr.dataset.index = String(i);
         for (let c = 0; c < CELLS; c += 1) tr.append(document.createElement('td'));
         tr.addEventListener('click', () => select(i));
         body.append(tr);
@@ -134,7 +138,5 @@ export function createPointerPage(ctx) {
   return {
     render,
     activate,
-    // The index ptr-add would send, exposed for callers that need it.
-    selectedIndex: () => selected,
   };
 }

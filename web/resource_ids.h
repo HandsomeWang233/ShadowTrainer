@@ -20,3 +20,5 @@
 // Not a web asset: the window class and WM_SETICON read this one directly.
 #define IDR_APP_ICON 115
 #define IDR_WEB_BOOT_JS 116
+#define IDR_WEB_SORT_JS 117
+#define IDR_WEB_MODAL_JS 118

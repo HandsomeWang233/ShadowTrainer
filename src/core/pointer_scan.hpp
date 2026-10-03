@@ -70,7 +70,7 @@ inline bool slot_is_static(const Slot& slot) noexcept { return (slot.address & s
 inline bool by_value(uint64_t left, const Slot& right) noexcept { return left < right.value; }
 
 inline int harvest(const std::vector<Range>& ranges, const std::vector<Range>& modules,
-    uint32_t alignment, std::vector<Slot>& map, bool& truncated,
+    uint32_t alignment, std::vector<Slot>& map,
     const CancelCallback& cancelled, const ProgressCallback& progress) {
     map.clear();
     // Reserve the whole budget up front: a growth reallocation would move the map and
@@ -110,7 +110,6 @@ inline int harvest(const std::vector<Range>& ranges, const std::vector<Range>& m
         }
     }
     std::sort(map.begin(), map.end(), [](const Slot& left, const Slot& right) { return left.value < right.value; });
-    (void)truncated;
     return CE_OK;
 }
 
@@ -127,7 +126,7 @@ inline int scan(const CePointerScanRequestV2& request, const std::vector<Range>&
     const std::vector<Range>& modules, const CancelCallback& cancelled,
     const ProgressCallback& progress, const VerifyCallback& verify, Outcome& outcome) {
     std::vector<Slot> map;
-    if (const int status = harvest(ranges, modules, request.alignment, map, outcome.truncated, cancelled, progress))
+    if (const int status = harvest(ranges, modules, request.alignment, map, cancelled, progress))
         return status;
     outcome.slots = map.size();
     if (cancelled()) return CE_CANCELLED;

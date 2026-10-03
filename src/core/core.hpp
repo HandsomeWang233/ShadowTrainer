@@ -57,6 +57,7 @@ public:
     int regions_v2(std::vector<CeRegionInfoV2>& out);
     int modules_v2(std::vector<CeModuleInfoV2>& out);
     int threads_v2(std::vector<CeThreadInfoV2>& out);
+    int unload_module_v2(uint64_t base);
     int pointer_scan_v2(const CePointerScanRequestV2& request);
     int pointer_scan_result_v2(uint64_t generation, uint64_t index, CePointerScanResultV2& result);
     int pointer_scan_status_v2(CePointerScanStatusV2& status);

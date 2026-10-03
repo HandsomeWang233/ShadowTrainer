@@ -67,7 +67,3 @@ export function onEvent(handler) {
   listeners.add(handler);
 }
 
-/** The status line always comes from the runtime; the page never composes it. */
-export function statusText(reply) {
-  return reply && typeof reply.status === 'string' ? reply.status : '';
-}

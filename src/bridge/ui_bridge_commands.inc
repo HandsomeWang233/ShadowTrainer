@@ -7,6 +7,28 @@
 
 namespace {
 
+// A list of paths or names is read case-insensitively -- Path, path and PATH are
+// the same file -- so the folded compare leads and the exact one only breaks
+// ties, which keeps the order total.
+bool text_less(const std::wstring& left, const std::wstring& right) {
+    const int folded = _wcsicmp(left.c_str(), right.c_str());
+    return folded != 0 ? folded < 0 : left < right;
+}
+
+// The loaded modules as [base, end) ranges. One enumeration serves both the
+// "base is static" column and the sort that column uses.
+std::vector<std::pair<uint64_t, uint64_t>> module_ranges_of(const CeApi& api) {
+    std::vector<std::pair<uint64_t, uint64_t>> ranges;
+    uint32_t required = 0;
+    if (api.get_modules_v2(nullptr, 0, &required) == CE_OK && required) {
+        std::vector<CeModuleInfoV2> loaded(required);
+        if (api.get_modules_v2(loaded.data(), required, &required) == CE_OK)
+            for (const auto& entry : loaded)
+                ranges.emplace_back(entry.base, entry.base + entry.module_size);
+    }
+    return ranges;
+}
+
 // The editor payload shared by "activate a scan result" and "select a record":
 // what the Address list tab needs to show the user that address.
 std::wstring editor_payload(uint64_t base, const std::wstring& offsets, const std::wstring& description,
@@ -50,16 +72,153 @@ Session::View* Session::view_for_kind(const std::wstring& kind) noexcept {
     return nullptr;
 }
 
+// ---- sorting ---------------------------------------------------------------------
+
+void Session::sort_view(View& target, int column) {
+    if (column < 0 || static_cast<size_t>(column) >= target.numeric_columns.size()) return;
+    const bool numeric = target.numeric_columns[static_cast<size_t>(column)];
+    const bool descending = target.sort_descending;
+    const size_t key = static_cast<size_t>(column);
+    const auto less = [numeric, key](const ViewRow& left, const ViewRow& right) {
+        return numeric ? left.keys[key] < right.keys[key] : text_less(left.cells[key], right.cells[key]);
+    };
+    // Stable, so two rows the key cannot separate keep the enumeration's order
+    // instead of shuffling on every repaint.
+    std::stable_sort(target.rows.begin(), target.rows.end(),
+                     [&](const ViewRow& left, const ViewRow& right) {
+                         return descending ? less(right, left) : less(left, right);
+                     });
+}
+
+// Every record's sort key, read from the core. The value column sorts by the
+// text the page shows, so the same read the live sampler does fills the key; the
+// whole table is read at once, which is why a sort can take a moment on a full
+// 10000-record list.
+bool Session::build_record_keys() {
+    records_keys_.clear();
+    records_keys_.resize(static_cast<size_t>(records_total_));
+    for (uint64_t i = 0; i < records_total_; ++i) {
+        CeRecordInfoV2 entry{};
+        entry.size = sizeof(entry);
+        entry.version = CE_V2_VERSION;
+        uint32_t required = 0;
+        if (api_.get_record_v2(i, &entry, nullptr, 0, &required) != CE_OK) return false;
+        if (!required || required > 1048576) return false;
+        std::vector<wchar_t> description(required);
+        if (api_.get_record_v2(i, &entry, description.data(), required, &required) != CE_OK) return false;
+        // An imported CT record whose type this build cannot represent: preserved
+        // on export, never editable. The same rule the row itself uses.
+        const bool opaque = entry.last_status == CE_UNSUPPORTED && entry.byte_length == 0;
+        RecordRow row;
+        row.id = entry.id;
+        row.resolved = entry.resolved_address;
+        row.type = entry.type;
+        row.flags = entry.flags;
+        row.byte_length = entry.byte_length;
+        row.opaque = opaque;
+        RecordKey& key = records_keys_[static_cast<size_t>(i)];
+        key.id = entry.id;
+        key.resolved = entry.resolved_address;
+        key.type = entry.type;
+        key.frozen = entry.frozen;
+        key.last_status = entry.last_status;
+        key.description = description.data();
+        // The column shows a name, so the sort uses the same name the row does.
+        key.type_text = opaque ? L"CT opaque (not representable)"
+                               : (key.type <= CE_TYPE_AOB ? type_names[key.type] : L"Unknown");
+        key.value = live_value(row);
+    }
+    return true;
+}
+
+void Session::sort_records(int column) {
+    const size_t count = records_keys_.size();
+    records_order_.resize(count);
+    for (size_t i = 0; i < count; ++i) records_order_[i] = i;
+    const bool descending = records_sort_descending_;
+    const auto less = [this, column](uint64_t left_index, uint64_t right_index) {
+        const RecordKey& left = records_keys_[static_cast<size_t>(left_index)];
+        const RecordKey& right = records_keys_[static_cast<size_t>(right_index)];
+        switch (column) {
+        case 0: return left.id < right.id;                                // Record ID
+        case 1: return text_less(left.description, right.description);    // Description
+        case 2: return left.resolved < right.resolved;                    // Resolved address
+        case 3: return text_less(left.type_text, right.type_text);        // Type
+        case 4: return left.frozen < right.frozen;                        // Frozen
+        case 5: return left.last_status < right.last_status;              // Last core status
+        default: return text_less(left.value, right.value);               // Current value
+        }
+    };
+    std::stable_sort(records_order_.begin(), records_order_.end(),
+                     [&](uint64_t left, uint64_t right) {
+                         return descending ? less(right, left) : less(left, right);
+                     });
+}
+
+uint64_t Session::record_core_index(size_t page_index) const {
+    if (records_order_.empty()) return records_start_ + page_index;
+    const uint64_t display = records_start_ + page_index;
+    return display < records_order_.size() ? records_order_[static_cast<size_t>(display)] : 0;
+}
+
+bool Session::load_pointer_all() {
+    if (pointer_all_valid_) return true;
+    pointer_all_.clear();
+    if (!pointer_generation_ || !pointer_total_) return false;
+    pointer_all_.reserve(static_cast<size_t>(pointer_total_));
+    for (uint64_t i = 0; i < pointer_total_; ++i) {
+        CePointerScanResultV2 result{};
+        result.size = sizeof(result);
+        result.version = CE_V2_VERSION;
+        if (api_.get_pointer_scan_result_v2(pointer_generation_, i, &result) != CE_OK) {
+            pointer_all_.clear();
+            return false;
+        }
+        pointer_all_.push_back(result);
+    }
+    pointer_all_valid_ = true;
+    return true;
+}
+
+void Session::sort_pointers(int column) {
+    const bool descending = pointer_sort_descending_;
+    const auto ranges = module_ranges_of(api_);
+    const auto is_static = [&ranges](const CePointerScanResultV2& result) {
+        for (const auto& range : ranges)
+            if (result.base >= range.first && result.base < range.second) return true;
+        return false;
+    };
+    const auto less = [column, &is_static](const CePointerScanResultV2& left,
+                                           const CePointerScanResultV2& right) {
+        switch (column) {
+        case 0: return left.base < right.base;                                  // Base
+        case 1: return pointer_offset_text(left) < pointer_offset_text(right);   // Offsets
+        default: return is_static(left) < is_static(right);                      // Base is static
+        }
+    };
+    std::stable_sort(pointer_all_.begin(), pointer_all_.end(),
+                     [&](const CePointerScanResultV2& left, const CePointerScanResultV2& right) {
+                         return descending ? less(right, left) : less(left, right);
+                     });
+}
+
+// The slice of the sorted (or natural) full list the page is showing. Only the
+// sort path uses it: without a sort the page is fetched a page at a time.
+void Session::slice_pointer_page() {
+    pointer_page_.clear();
+    if (!pointer_all_valid_) return;
+    const uint64_t wanted = (std::min)(static_cast<uint64_t>(page_size),
+                                       pointer_total_ > pointer_start_ ? pointer_total_ - pointer_start_ : 0);
+    for (uint64_t i = 0; i < wanted; ++i) {
+        const uint64_t display = pointer_start_ + i;
+        if (display >= pointer_all_.size()) break;
+        pointer_page_.push_back(pointer_all_[static_cast<size_t>(display)]);
+    }
+}
+
 bool Session::selection_opaque() const noexcept {
     if (selected_index_ < 0 || static_cast<size_t>(selected_index_) >= records_.size()) return false;
     return records_[static_cast<size_t>(selected_index_)].opaque;
-}
-
-bool Session::record_at(size_t index, RecordRow& row, std::wstring& description) const {
-    if (index >= records_.size()) return false;
-    row = records_[index];
-    description = row.description;
-    return true;
 }
 
 bool Session::validate_selection(int& index, Answer& answer) const {
@@ -226,7 +385,6 @@ Session::Answer Session::cmd_scan(const std::wstring& name, const json::Value* a
         request.byte_length = scan_info_.byte_length;
     }
 
-    scan_was_first_ = first;
     completion_operation_ = first ? L"First scan" : L"Next scan";
     completion_status_ = CE_OK;
     completion_detail_.clear();
@@ -360,7 +518,6 @@ bool Session::refresh_results(bool passive) {
     results_dirty_ = true;
     results_dirty_from_ = 0;
     load_result_rows(passive || info.byte_length > current_value_limit);
-    (void)passive;
     return true;
 }
 
@@ -437,6 +594,16 @@ void Session::refresh_records() {
     uint64_t count = 0;
     if (api_.record_count_v2(&count) != CE_OK) return;
     records_total_ = count;
+    // The key table is a snapshot of the core, so it dies with the refresh that
+    // re-reads it. The order survives only while it still describes this list:
+    // rows may have been added or removed under it, and an order that points at
+    // the wrong records is worse than no order.
+    records_keys_.clear();
+    if (records_order_.size() != static_cast<size_t>(count)) {
+        records_order_.clear();
+        records_sort_column_ = -1;
+        records_sort_descending_ = false;
+    }
     if (!count) records_start_ = 0;
     else if (records_start_ >= count) records_start_ = ((count - 1) / page_size) * page_size;
     records_.clear();
@@ -447,11 +614,13 @@ void Session::refresh_records() {
     selected_index_ = -1;
     const uint64_t wanted = (std::min)(static_cast<uint64_t>(page_size), count - records_start_);
     for (uint64_t i = 0; i < wanted; ++i) {
+        // The display position is not the core's index once a sort is in force.
+        const uint64_t source = record_core_index(static_cast<size_t>(i));
         CeRecordInfoV2 entry{};
         entry.size = sizeof(entry);
         entry.version = CE_V2_VERSION;
         uint32_t required = 0;
-        if (api_.get_record_v2(records_start_ + i, &entry, nullptr, 0, &required) != CE_OK) {
+        if (api_.get_record_v2(source, &entry, nullptr, 0, &required) != CE_OK) {
             success = false;
             break;
         }
@@ -460,7 +629,7 @@ void Session::refresh_records() {
             break;
         }
         std::vector<wchar_t> description(required);
-        if (api_.get_record_v2(records_start_ + i, &entry, description.data(), required, &required) !=
+        if (api_.get_record_v2(source, &entry, description.data(), required, &required) !=
             CE_OK) {
             success = false;
             break;
@@ -518,7 +687,7 @@ void Session::poll_record_values(bool visible, bool minimized) {
         entry.size = sizeof(entry);
         entry.version = CE_V2_VERSION;
         uint32_t required = 0;
-        if (api_.get_record_v2(records_start_ + index, &entry, nullptr, 0, &required) != CE_OK) return;
+        if (api_.get_record_v2(record_core_index(index), &entry, nullptr, 0, &required) != CE_OK) return;
         if (entry.id != records_[index].id) {
             records_stale_ = true;
             return;
@@ -545,6 +714,29 @@ Session::Answer Session::cmd_record(const std::wstring& name, const json::Value*
         live_first_ = static_cast<size_t>(arg_u64(args, L"first"));
         live_last_ = static_cast<size_t>(arg_u64(args, L"last"));
         return Answer{};
+    }
+    if (name == L"record.sort") {
+        if (!records_valid_) return Answer{CE_INVALID_ARGUMENT, L"Load the record list before sorting it.", {}};
+        if (records_stale_) return Answer{CE_BUSY, L"Refresh the record list first.", {}};
+        const int column = static_cast<int>(arg_i32(args, L"column"));
+        if (column < 0 || column > 6) return Answer{CE_INVALID_ARGUMENT, L"Unknown column.", {}};
+        if (records_sort_column_ == column) records_sort_descending_ = !records_sort_descending_;
+        else {
+            records_sort_column_ = column;
+            records_sort_descending_ = false;
+        }
+        // Sorting reads every record, which is more than a page: it is the one
+        // place in this list that touches all of them at once.
+        if (!build_record_keys()) {
+            records_sort_column_ = -1;
+            return Answer{CE_BUSY, diagnostic_of(CE_BUSY), {}};
+        }
+        sort_records(column);
+        records_start_ = 0;
+        refresh_records();
+        Answer answer;
+        answer.data = records_json();
+        return answer;
     }
     if (name == L"record.refresh") {
         if (!idle()) {
@@ -794,11 +986,13 @@ bool Session::load_view(int kind, bool refresh) {
             if (code == CE_INVALID_ARGUMENT) continue;
             if (code != CE_OK) return false;
             items.resize(required);
+            target->numeric_columns = {true, true, false, false, false, false};
             for (const auto& entry : items) {
                 ViewRow row;
                 row.cells = {address_text(entry.base), hex_text(entry.region_size),
                              region_state_name(entry.state), protect_name(entry.protect),
                              protect_name(entry.allocation_protect), region_type_name(entry.type)};
+                row.keys = {entry.base, entry.region_size, 0, 0, 0, 0};
                 target->rows.push_back(std::move(row));
             }
         } else if (kind == 1) {
@@ -807,10 +1001,15 @@ bool Session::load_view(int kind, bool refresh) {
             if (code == CE_INVALID_ARGUMENT) continue;
             if (code != CE_OK) return false;
             items.resize(required);
+            target->numeric_columns = {true, true, false, false};
             for (const auto& entry : items) {
                 ViewRow row;
                 row.cells = {address_text(entry.base), hex_text(entry.module_size),
                              file_name_of(entry.path), entry.path};
+                row.keys = {entry.base, entry.module_size, 0, 0};
+                // The base is what an unload names the module by, so the page can
+                // only ever ask for a row that was actually on screen.
+                row.id = entry.base;
                 target->rows.push_back(std::move(row));
             }
         } else {
@@ -819,6 +1018,7 @@ bool Session::load_view(int kind, bool refresh) {
             if (code == CE_INVALID_ARGUMENT) continue;
             if (code != CE_OK) return false;
             items.resize(required);
+            target->numeric_columns = {true, true, true, false, false};
             for (const auto& entry : items) {
                 const bool has_priority = (entry.valid_mask & (1u << 1)) != 0;
                 ViewRow row;
@@ -829,6 +1029,7 @@ bool Session::load_view(int kind, bool refresh) {
                              (entry.valid_mask & 1u) ? std::wstring(entry.description)
                                                      : std::wstring(L"<unnamed>"),
                              entry.current ? L"Current" : L""};
+                row.keys = {entry.thread_id, has_priority ? entry.priority : 0, entry.created, 0, 0};
                 target->rows.push_back(std::move(row));
             }
         }
@@ -837,6 +1038,9 @@ bool Session::load_view(int kind, bool refresh) {
         if (!target->total) target->start = 0;
         else if (target->start >= target->total)
             target->start = ((target->total - 1) / page_size) * page_size;
+        // A refresh re-reads the host, and the reader's place in a sorted list is
+        // the sorted list, so the order is applied to the new rows as well.
+        if (target->sort_column >= 0) sort_view(*target, target->sort_column);
         if (refresh) target->refresh_requested = false;
         return true;
     }
@@ -935,20 +1139,21 @@ bool Session::memory_payload(uint64_t address, Answer& answer) {
 // ---- pointer scan ----------------------------------------------------------------
 
 void Session::refresh_pointer_results() {
+    const uint64_t generation = pointer_status_valid_ ? pointer_status_.generation : 0;
+    // The full list belongs to one generation: a new scan invalidates it, and
+    // paging or refreshing on the same generation reuses it.
+    if (generation != pointer_generation_) pointer_all_valid_ = false;
     pointer_total_ = pointer_status_valid_ ? pointer_status_.total : 0;
-    pointer_generation_ = pointer_status_valid_ ? pointer_status_.generation : 0;
+    pointer_generation_ = generation;
     if (!pointer_total_) pointer_start_ = 0;
     else if (pointer_start_ >= pointer_total_)
         pointer_start_ = ((pointer_total_ - 1) / page_size) * page_size;
     pointer_page_.clear();
-    // One module enumeration for the whole page rather than one per row.
-    std::vector<std::pair<uint64_t, uint64_t>> module_ranges;
-    uint32_t required = 0;
-    if (api_.get_modules_v2(nullptr, 0, &required) == CE_OK && required) {
-        std::vector<CeModuleInfoV2> loaded(required);
-        if (api_.get_modules_v2(loaded.data(), required, &required) == CE_OK)
-            for (const auto& entry : loaded)
-                module_ranges.emplace_back(entry.base, entry.base + entry.module_size);
+    if (pointer_sort_column_ >= 0 && load_pointer_all()) {
+        sort_pointers(pointer_sort_column_);
+        slice_pointer_page();
+        pointer_page_valid_ = true;
+        return;
     }
     const uint64_t wanted = (std::min)(static_cast<uint64_t>(page_size),
                                        pointer_total_ > pointer_start_ ? pointer_total_ - pointer_start_ : 0);
@@ -977,6 +1182,50 @@ Session::Answer Session::cmd_view(const std::wstring& name, const json::Value* a
             return Answer{};
         }
         if (!load_view(kind, true)) return Answer{CE_BUSY, diagnostic_of(CE_BUSY), {}};
+        Answer answer;
+        answer.data = render_view(kind);
+        return answer;
+    }
+    if (name == L"view.unload") {
+        // Only a module has something to unload. The other two views share this
+        // command's plumbing, so they refuse by name rather than by silence.
+        if (kind != 1) return Answer{CE_INVALID_ARGUMENT, L"Only a loaded module can be unloaded.", {}};
+        if (!idle()) return Answer{CE_BUSY, L"The session is busy; wait for the running job to finish.", {}};
+        const uint64_t base = arg_u64(args, L"base");
+        // The base has to be one of the rows this page was shown, so a stale page
+        // cannot unload a module that appeared after it was built.
+        const bool listed = std::any_of(target->rows.begin(), target->rows.end(),
+                                        [base](const ViewRow& row) { return row.id && row.id == base; });
+        if (!listed) return Answer{CE_INVALID_ARGUMENT, L"That module is not in the current list.", {}};
+        const int code = api_.unload_module_v2(base);
+        if (code != CE_OK) return Answer{code, diagnostic_of(code), {}};
+        set_status(L"Unload module: OK (0)");
+        // The snapshot the page was paging through no longer describes the host,
+        // so answer with a fresh enumeration instead of a stale page.
+        if (!load_view(kind, true)) {
+            set_status(L"Unload module: OK (0); the module list could not be re-read.");
+            return Answer{};
+        }
+        Answer answer;
+        answer.data = render_view(kind);
+        return answer;
+    }
+    if (name == L"view.sort") {
+        if (!target->loaded) return Answer{CE_INVALID_ARGUMENT, L"Load the view before sorting it.", {}};
+        const int column = static_cast<int>(arg_i32(args, L"column"));
+        if (column < 0 || static_cast<size_t>(column) >= target->numeric_columns.size())
+            return Answer{CE_INVALID_ARGUMENT, L"Unknown column.", {}};
+        // Clicking the same header again reverses it; a different column starts
+        // ascending, which is what a reader expects from a fresh column.
+        if (target->sort_column == column) target->sort_descending = !target->sort_descending;
+        else {
+            target->sort_column = column;
+            target->sort_descending = false;
+        }
+        sort_view(*target, column);
+        // The old page number meant a place in the old order, so the list goes
+        // back to the top rather than showing a window that no longer exists.
+        target->start = 0;
         Answer answer;
         answer.data = render_view(kind);
         return answer;
@@ -1191,6 +1440,27 @@ Session::Answer Session::cmd_pointer(const std::wstring& name, const json::Value
     }
     if (name == L"ptr.refresh") {
         poll_pointer_status();
+        refresh_pointer_results();
+        Answer answer;
+        answer.data = pointer_rows_payload();
+        return answer;
+    }
+    if (name == L"ptr.sort") {
+        const int column = static_cast<int>(arg_i32(args, L"column"));
+        if (column < 0 || column > 2) return Answer{CE_INVALID_ARGUMENT, L"Unknown column.", {}};
+        if (pointer_page_valid_ && !pointer_total_) return Answer{CE_INVALID_ARGUMENT, L"No pointer results yet.", {}};
+        if (pointer_sort_column_ == column) pointer_sort_descending_ = !pointer_sort_descending_;
+        else {
+            pointer_sort_column_ = column;
+            pointer_sort_descending_ = false;
+        }
+        // This is the one path that reads every result rather than a page of
+        // them, which is what makes the order the whole scan's and not the
+        // window's. The scan caps its own result set, so the read is bounded.
+        if (!load_pointer_all()) return Answer{CE_BUSY, diagnostic_of(CE_BUSY), {}};
+        sort_pointers(column);
+        pointer_start_ = 0;
+        slice_pointer_page();
         Answer answer;
         answer.data = pointer_rows_payload();
         return answer;
@@ -1298,20 +1568,15 @@ std::wstring Session::pointer_rows_payload() {
         .key(L"start").u64(pointer_start_)
         .key(L"total").u64(pointer_total_)
         .key(L"count").u64(pointer_page_.size())
+        .key(L"sortColumn").integer(pointer_sort_column_)
+        .key(L"sortDescending").boolean(pointer_sort_descending_)
         .key(L"label").string(L"Results: " + std::to_wstring(pointer_total_) + L" total | " +
                               (pointer_page_.empty()
                                    ? std::wstring(L"0")
                                    : std::to_wstring(pointer_start_ + 1) + L" - " +
                                          std::to_wstring(pointer_start_ + pointer_page_.size())) +
                               L" | 512/page");
-    std::vector<std::pair<uint64_t, uint64_t>> ranges;
-    uint32_t required = 0;
-    if (api_.get_modules_v2(nullptr, 0, &required) == CE_OK && required) {
-        std::vector<CeModuleInfoV2> loaded(required);
-        if (api_.get_modules_v2(loaded.data(), required, &required) == CE_OK)
-            for (const auto& entry : loaded)
-                ranges.emplace_back(entry.base, entry.base + entry.module_size);
-    }
+    const auto ranges = module_ranges_of(api_);
     writer.key(L"rows").array();
     for (const auto& result : pointer_page_) {
         bool is_static = false;

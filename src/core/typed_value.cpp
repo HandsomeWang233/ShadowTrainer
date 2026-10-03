@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstring>
 #include <cwchar>
-#include <cwctype>
 #include <iomanip>
 #include <limits>
 #include <locale>

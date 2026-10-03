@@ -14,7 +14,6 @@
 #include <cstdlib>
 #include <cwchar>
 #include <string>
-#include <vector>
 
 #include <WebView2.h>
 
@@ -110,6 +109,8 @@ const Asset assets[] = {
     {L"js/hexview.js", IDR_WEB_HEXVIEW_JS, L"text/javascript; charset=utf-8"},
     {L"js/views.js", IDR_WEB_VIEWS_JS, L"text/javascript; charset=utf-8"},
     {L"js/pointer.js", IDR_WEB_POINTER_JS, L"text/javascript; charset=utf-8"},
+    {L"js/sort.js", IDR_WEB_SORT_JS, L"text/javascript; charset=utf-8"},
+    {L"js/modal.js", IDR_WEB_MODAL_JS, L"text/javascript; charset=utf-8"},
     {L"img/brand.png", IDR_WEB_BRAND_PNG, L"image/png"},
 };
 
@@ -254,7 +255,7 @@ bool load_asset(HINSTANCE module, const Asset& asset, std::string& bytes) {
 }
 
 // Exact equality against the table is the whole guard on the request path: a
-// hand-written URL can only ever name one of the fifteen entries above. That
+// hand-written URL can only ever name one of the seventeen entries above. That
 // still holds now that the entries carry separators, because the match is
 // against a fixed list rather than against the filesystem -- no request-derived
 // string is ever handed to CreateFileW. Adding a pattern match or a prefix
@@ -299,7 +300,6 @@ struct Host::Impl {
     // a half-torn-down WebView while Close() pumps its own messages.
     std::atomic<bool> closing{false};
     std::wstring error;
-    std::wstring data_folder;
     RECT bounds{};
     bool bounds_valid = false;
 
@@ -591,7 +591,6 @@ bool Host::start(HWND window, HINSTANCE module, bool hold_visible) {
         impl_->fail(E_FAIL, L"Cannot locate a writable user data folder for WebView2");
         return false;
     }
-    impl_->data_folder = folder;
 
     ComPtr<EnvironmentReady> callback(new EnvironmentReady(impl_));
     const HRESULT hr =
@@ -676,7 +675,6 @@ void Host::shutdown() {
     // The data folder stays on disk on purpose: the browser process is still
     // shutting down and may be holding it, and a later load in this same process
     // reuses the same per-pid path. Stale folders are swept at the next startup.
-    impl_->data_folder.clear();
 }
 
 } // namespace ce::web

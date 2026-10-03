@@ -34,7 +34,7 @@ overview see [`../README.md`](../README.md); for the subsystem records see the
 |---|---|
 | `core_tests`, `typed_tests`, `polish_core_tests`, `pointer_scan_tests`, `hotkey_tests` | nothing (DLL-independent) |
 | `bridge_tests`, `runtime_tests`, `runtime_v2_tests` | the path to `dist/x64/shadowtrainer.dll` |
-| `bun test tests\web` | no packages; runs the three JS suites against the real `web/js/*.js` |
+| `bun test tests\web` | no packages; runs the six JS suites against the real `web/js/*.js` |
 
 **Known gap.** There is no configured Lazarus/FPC toolchain and no compiled
 Tutorial on this machine, so the differential run against the reference

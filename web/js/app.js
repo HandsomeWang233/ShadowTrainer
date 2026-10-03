@@ -5,10 +5,10 @@
 // always send the CURRENT form values, read straight off the DOM, because the
 // runtime deliberately keeps no copy of the form: a reload then cannot leave the
 // two sides disagreeing about what is in a field.
-import { call, connected, onEvent, request, statusText } from './bridge.js';
+import { call, connected, onEvent, request } from './bridge.js';
 import * as boot from './boot.js';
 import { enabled, apply as applyGating } from './gating.js';
-import { CE_TYPE, CE_CMP, PAGE_SIZE } from './format.js';
+import { PAGE_SIZE } from './format.js';
 import * as chrome from './chrome.js';
 import { createScanPage } from './scan.js';
 import { createAddressPage } from './address.js';
@@ -40,7 +40,6 @@ const model = {
 // the rail's index is mapped to a module rather than indexed into a list.
 let modules = [];
 let pageModule = [];
-let currentPage = 0;
 
 // ---- form ------------------------------------------------------------------------
 
@@ -185,7 +184,6 @@ function renderAll() {
 }
 
 function onPage(index) {
-  currentPage = index;
   chrome.showPage(index);
   const page = pageModule[index];
   if (page && page.activate) page.activate(model, index);
@@ -212,8 +210,8 @@ function mergeEvent(event) {
   if (model.status) chrome.setStatus(model.status);
   const [word, state] = chrome.sessionFrom(model.controls);
   chrome.setSession(word, state);
-  chrome.setProgress('scan-progress', model.scan ? model.scan.progress : null);
-  chrome.setProgress('ptr-progress', model.pointer ? model.pointer.progress : null);
+  // Both progress bars are painted by the page that owns them, in renderAll()
+  // below, so every path that repaints the model also repaints them.
   renderAll();
 }
 
@@ -250,7 +248,6 @@ async function start() {
   onEvent(mergeEvent);
   try {
     const data = await call('hello');
-    model.host = data.host;
     model.status = data.status || '';
     model.scan = data.scan;
     model.pointer = data.pointer;

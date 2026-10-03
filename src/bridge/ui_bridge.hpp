@@ -72,6 +72,7 @@ struct CeApi {
     int (CE_CALL *get_regions_v2)(CeRegionInfoV2* regions, uint32_t capacity, uint32_t* required);
     int (CE_CALL *get_modules_v2)(CeModuleInfoV2* modules, uint32_t capacity, uint32_t* required);
     int (CE_CALL *get_threads_v2)(CeThreadInfoV2* threads, uint32_t capacity, uint32_t* required);
+    int (CE_CALL *unload_module_v2)(uint64_t base);
 
     int (CE_CALL *pointer_scan_v2)(const CePointerScanRequestV2* request);
     int (CE_CALL *cancel_pointer_scan_v2)();
@@ -98,11 +99,9 @@ public:
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
-    void set_wake(Wake wake) { wake_ = std::move(wake); }
     // While a modal dialog is open the UI thread is inside a nested message
     // loop, so commands are refused and pump() skips core work.
     void set_dialog_active(bool active) noexcept { dialog_active_ = active; }
-    bool dialog_active() const noexcept { return dialog_active_; }
 
     std::wstring dispatch(const std::wstring& command);
     std::wstring pump(bool visible, bool minimized);
@@ -156,7 +155,6 @@ private:
 
     // Sections. Each returns true when the content differs from the cached copy,
     // which is what keeps an idle tick from pushing anything at all.
-    bool section_status(std::wstring& out);
     bool section_scan(std::wstring& out);
     bool section_pointer(std::wstring& out);
     bool section_controls(std::wstring& out);
@@ -177,7 +175,6 @@ private:
     void set_status(std::wstring text);
     bool scan_busy() const noexcept;
     bool idle() const noexcept { return !stopping_ && !scan_busy() && !dialog_active_; }
-    bool busy_for_command() const noexcept { return stopping_ || dialog_active_; }
     bool can_move_memory(bool next) const noexcept;
     std::wstring memory_label() const;
 
@@ -204,9 +201,24 @@ private:
                       std::wstring& out, int& code);
     std::wstring live_value(const RecordRow& row);
     bool memory_payload(uint64_t address, Answer& answer);
-    bool record_at(size_t index, RecordRow& row, std::wstring& description) const;
     bool validate_selection(int& index, Answer& answer) const;
-    uint64_t selected_id() const noexcept { return selected_id_; }
+
+    // Sorting. A view holds every row, so it sorts in place; the record and
+    // pointer lists are longer than a page, so each keeps an order that maps a
+    // display position back to the index the core knows it by.
+    struct View;
+    void sort_view(View& target, int column);
+    // Builds the key table for every record, reading it once per refresh. False
+    // when the core would not hand one over.
+    bool build_record_keys();
+    void sort_records(int column);
+    uint64_t record_core_index(size_t page_index) const;
+    // Fetches all pointer results so they can be ordered. Bounded by the scan's
+    // own result cap; false when the core refuses any of them.
+    bool load_pointer_all();
+    void sort_pointers(int column);
+    // Rebuilds the visible window out of the sorted full list.
+    void slice_pointer_page();
     bool selection_opaque() const noexcept;
 
     // Held by value: a Session outlives the expression that built its table,
@@ -219,8 +231,6 @@ private:
     std::wstring completion_operation_;
     int completion_status_ = CE_OK;
     std::wstring completion_detail_;
-    bool scan_was_first_ = false;
-    bool pointer_added_ = false;
 
     bool cancel_requested_ = false;
     bool dialog_active_ = false;
@@ -251,6 +261,13 @@ private:
     uint64_t pointer_total_ = 0;
     uint64_t pointer_generation_ = 0;
     bool pointer_page_valid_ = false;
+    // A sort needs the whole result set, which is bounded by the scan's own cap
+    // (65536). It is fetched whole the first time a column is clicked and kept
+    // until the next scan; without a sort the page stays a page.
+    std::vector<CePointerScanResultV2> pointer_all_;
+    bool pointer_all_valid_ = false;
+    int pointer_sort_column_ = -1;
+    bool pointer_sort_descending_ = false;
 
     // Results page. Cells fill in as they load so a passive tick hands the
     // browser only the rows that appeared since the last one.
@@ -267,8 +284,6 @@ private:
     size_t results_next_ = 0;
     size_t results_dirty_from_ = 0;
     bool results_dirty_ = false;
-    uint64_t results_selected_ = 0;   // kept across rebuilds, by address
-    uint64_t results_focused_ = 0;
 
     struct RecordRow {
         uint64_t id = 0;
@@ -281,6 +296,21 @@ private:
         bool opaque = false;
     };
     std::vector<RecordRow> records_;
+    // A record sort is global, but only a page of rows is held at a time: the
+    // order maps a display position to the index the core knows the record by.
+    // Empty means the order the core returned, which is what an unsorted list is.
+    struct RecordKey {
+        uint64_t id = 0;
+        uint64_t resolved = 0;
+        uint32_t type = 0, frozen = 0, last_status = 0;
+        std::wstring description;
+        std::wstring type_text;   // the column the page shows, not the enum
+        std::wstring value;
+    };
+    std::vector<RecordKey> records_keys_;   // one per record, in core order
+    std::vector<uint64_t> records_order_;   // core index per display position
+    int records_sort_column_ = -1;
+    bool records_sort_descending_ = false;
     uint64_t records_total_ = 0;
     uint64_t records_start_ = 0;
     bool records_valid_ = false;
@@ -297,6 +327,13 @@ private:
 
     struct ViewRow {
         std::vector<std::wstring> cells;
+        // Numeric value of every cell, for the columns that have one: a base
+        // address is a number whatever the cell shows. Text columns leave it 0
+        // and sort by their cell.
+        std::vector<uint64_t> keys;
+        // What the row names, for the commands that act on one: a module's base
+        // address today. Zero for rows that name nothing a command can take.
+        uint64_t id = 0;
     };
     struct View {
         std::vector<ViewRow> rows;
@@ -304,7 +341,12 @@ private:
         uint64_t total = 0;
         bool loaded = false;
         bool refresh_requested = false;
-        std::wstring label;
+        // Which column the reader last clicked, and which way it runs. -1 is the
+        // order the enumeration produced. Each kind names its own numeric
+        // columns, so the comparator knows a base from a name.
+        int sort_column = -1;
+        bool sort_descending = false;
+        std::vector<bool> numeric_columns;
     };
     View regions_, modules_, threads_;
     View* view(int kind) noexcept;
@@ -332,7 +374,6 @@ private:
     bool deferred_record_refresh_ = false;
     bool deferred_view_refresh_ = false;
     uint64_t event_seq_ = 0;
-    bool hello_seen_ = false;
 };
 
 } // namespace ce::ui

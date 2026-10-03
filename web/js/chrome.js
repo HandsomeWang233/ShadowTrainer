@@ -81,20 +81,39 @@ export function sessionFrom(controls) {
 }
 
 /**
- * A determinate bar takes a 0..1000 value; marquee and idle are classes, so the
- * animation stops when nothing is happening.
+ * What the `progress` section means on screen: the class to carry, the fill
+ * width, and whether the bar belongs on screen at all.
+ *
+ * `idle` is the only mode that draws nothing: it covers a session that has never
+ * scanned, the telemetry New just reset, and the cancelled and failed passes the
+ * runtime folds into it. A running scan (`marquee`/`determinate`) draws the
+ * track, a completed one keeps it at full width, and the label beside it carries
+ * the state in words throughout -- the bar is never the only signal.
+ */
+export function progressView(progress) {
+  // A missing section, or one with no mode, is idle: the runtime always names
+  // one, so anything else is a page opened outside it.
+  const mode = (progress && progress.mode) || 'idle';
+  // A determinate bar takes a 0..1000 value from the runtime.
+  const fill = mode === 'determinate' || mode === 'done'
+    ? Math.max(0, Math.min(100, (progress.value || 0) / 10))
+    : 0;
+  return { mode, visible: mode !== 'idle', fill };
+}
+
+/**
+ * Marquee and determinate are classes, so the animation stops when nothing is
+ * happening; visibility follows the same rule in one place for both pages.
  */
 export function setProgress(id, progress) {
   const bar = win(id);
   if (!bar) return;
-  const mode = progress ? progress.mode : 'idle';
-  bar.classList.toggle('is-indeterminate', mode === 'marquee');
-  bar.classList.toggle('is-busy', mode === 'marquee' || mode === 'determinate');
-  bar.classList.toggle('is-failed', mode === 'failed');
-  const fill = mode === 'determinate' || mode === 'done'
-    ? Math.max(0, Math.min(100, (progress.value || 0) / 10))
-    : 0;
-  bar.style.setProperty('--fill', `${fill}%`);
+  const view = progressView(progress);
+  bar.hidden = !view.visible;
+  bar.classList.toggle('is-indeterminate', view.mode === 'marquee');
+  bar.classList.toggle('is-busy', view.mode === 'marquee' || view.mode === 'determinate');
+  bar.classList.toggle('is-failed', view.mode === 'failed');
+  bar.style.setProperty('--fill', `${view.fill}%`);
 }
 
 export function setText(id, text) {

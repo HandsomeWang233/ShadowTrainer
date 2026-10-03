@@ -119,15 +119,14 @@ test('a busy session closes the door on new work but not on its own cancel', () 
   expect(scanning['scan-new']).toBe(false);
   expect(scanning['scan-cancel']).toBe(true);
   expect(scanning['results-refresh']).toBe(false);
-  // The pointer page has its own idle flag, so its buttons stay live.
-  expect(scanning['ptr-refresh']).toBe(false);
+  expect(scanning['ptr-refresh']).toBe(false);   // its own idle flag gates it
+  // The pointer cancel follows its own activity flag instead.
   expect(flags({ idle: false, pointerActive: true, job: 'pointer' })['ptr-cancel']).toBe(true);
 });
 
-test('a stopping session disables the frame and the rail as well', () => {
+test('a stopping session disables the frame as well', () => {
   const stopping = flags({ stopping: true, idle: false });
   expect(stopping['stop-session']).toBe(false);
-  expect(stopping.nav).toBe(false);
   expect(stopping['scan-first']).toBe(false);
 });
 

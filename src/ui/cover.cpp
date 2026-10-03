@@ -16,11 +16,22 @@ constexpr int letters = 7;
 
 constexpr ULONGLONG fly_delay = 180;
 constexpr ULONGLONG fly_span = 780;
-constexpr ULONGLONG letter_start = 1100;
+// The fly curve is front-loaded, so the word is visibly still from about 750ms
+// even though its span runs to 960. The letters start there rather than after a
+// beat: any gap between "the word has stopped" and "the row starts widening" is
+// dead time in the middle of the move, and every version of it has read as a
+// stutter at the hand-over. The two now overlap, so the creep of the fly's tail
+// becomes the start of the glide and the motion never stops.
+constexpr ULONGLONG letter_start = 780;
 constexpr ULONGLONG letter_step = 95;
 constexpr ULONGLONG letter_span = 340;
-constexpr ULONGLONG word_ms = 2010;      // the last letter has landed
-constexpr ULONGLONG hold_ms = 2000;      // held complete, long enough to read
+// Derived rather than written down, so the last letter's landing and the fade
+// below cannot drift apart when a timing above is tuned.
+constexpr ULONGLONG word_ms = letter_start + (letters - 1) * letter_step + letter_span;
+static_assert(fly_delay + fly_span > letter_start, "the letters must start before the fly's span ends");
+// Held complete before the fade. Two seconds was the first number and read as a
+// pause on the way to the UI; half a second is a beat instead.
+constexpr ULONGLONG hold_ms = 500;
 constexpr ULONGLONG fade_ms = 260;
 constexpr ULONGLONG total_ms = word_ms + hold_ms + fade_ms;
 
@@ -74,9 +85,10 @@ double bezier(double x, double x1, double y1, double x2, double y2) {
     return 3.0 * u * u * t * y1 + 3.0 * u * t * t * y2 + t * t * t;
 }
 
-// The curves web/css/app.css names.
+// The curves the sequence runs on: the fly-in and the glow. The letters do not
+// use one -- their box, fade, lift and scale all run off a single linear clock,
+// which is what keeps the row's re-centring in step with the ink; see paint().
 double fly_curve(double t) { return bezier(t, 0.16, 1.0, 0.3, 1.0); }
-double letter_curve(double t) { return bezier(t, 0.2, 0.9, 0.25, 1.0); }
 double glow_curve(double t) { return bezier(t, 0.2, 0.8, 0.3, 1.0); }
 
 BYTE mix(BYTE from, BYTE to, double t) {
@@ -266,15 +278,17 @@ void paint(HDC dc, const RECT& client, HBRUSH background, COLORREF background_co
         const double fly = fly_curve(progress(elapsed, fly_delay, fly_span));
         const int fly_x = static_cast<int>((1.0 - fly) * width * 0.74);
 
-        // Only the letters that have landed take up room, so the row re-centres
-        // on every frame and the word never sits off the middle.
+        // The row is as wide as the sum of EVERY letter's box, each grown to its
+        // own progress -- the way the page's flex row widens as its spans do.
+        // Taking only the last started letter's width instead counted the ones
+        // before it as fully open, so the row jumped by most of a letter every
+        // time a new one started and the word slid left in seven jerks. The box
+        // grows on the letter's own linear clock, so the shift and the ink agree.
         int rest_width = 0;
         for (int i = 0; i < letters; ++i) {
-            const double letter = letter_curve(
-                progress(elapsed, letter_start + i * letter_step, letter_span));
+            const double letter = progress(elapsed, letter_start + i * letter_step, letter_span);
             if (letter <= 0.0) break;
-            const int before = state.prefix[i];
-            rest_width = before + static_cast<int>((state.prefix[i + 1] - before) * letter);
+            rest_width += static_cast<int>((state.prefix[i + 1] - state.prefix[i]) * letter);
         }
 
         const int left = centre_x - (state.first_width + rest_width) / 2 + fly_x;
@@ -293,8 +307,8 @@ void paint(HDC dc, const RECT& client, HBRUSH background, COLORREF background_co
             for (int i = 0; i < letters; ++i) {
                 const double letter = progress(elapsed, letter_start + i * letter_step, letter_span);
                 if (letter <= 0.0) break;
-                // The page fades and lifts the letter itself linearly; only the
-                // box it grows into uses the bezier.
+                // The letter fades, lifts and scales on this same linear clock,
+                // which is also the clock the box above grows on.
                 const double alpha = std::min(letter / 0.45, 1.0) * (1.0 - fade);
                 if (alpha <= 0.004) continue;
                 const double rise = (1.0 - letter) * 0.45 * em;
@@ -314,8 +328,7 @@ void paint(HDC dc, const RECT& client, HBRUSH background, COLORREF background_co
                 }
 
                 // Still moving, so it is placed by its own transform, the way the
-                // page
-                // does it: translateY(0.45em) scale(0.7) at the start. The
+                // page does it: translateY(0.45em) scale(0.7) at the start. The
                 // origin is the letter's own box centre, as transform-origin
                 // defaults to - scaling about the left edge instead would walk
                 // the letter sideways and pull the row off centre.

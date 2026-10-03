@@ -1,20 +1,20 @@
-# 宿主进程只读视图（Regions / Modules / Threads）
+# 宿主进程视图（Regions / Modules / Threads）
 
 [English](PROCESS_VIEWS.md) | [中文](PROCESS_VIEWS_CN.md)
 
-宿主进程的三个只读视图——它的内存区域、已加载模块与线程——以标签页形式出现在 WebView 页面中。它们只做枚举与展示；这里没有任何东西会改动宿主状态。本文涵盖它们对外暴露的 ABI、遍历如何工作、页面如何驱动它们，以及它们止步于何处。
+宿主进程的三个视图——它的内存区域、已加载模块与线程——以标签页形式出现在 WebView 页面中。Regions 与 Threads 只做枚举与展示；Modules 带一个动词：卸载，这是本子系统里唯一会改动宿主状态的地方。本文涵盖它们对外暴露的 ABI、遍历如何工作、页面如何驱动它们，以及它们止步于何处。
 
 ## 范围
 
-参考对象是 CE 的 `formmemoryregionsunit.pas`（468 行）、`frmEnumerateDLLsUnit.pas`（399 行）与 `frmThreadlistunit.pas`（1194 行），其中只取「枚举 + 展示」：
+参考对象是 CE 的 `formmemoryregionsunit.pas`（468 行）、`frmEnumerateDLLsUnit.pas`（399 行）与 `frmThreadlistunit.pas`（1194 行），其中取「枚举 + 展示」，外加一个动作：
 
 - CE 的区域窗口里唯一会改动宿主状态的动作是「设为可写」，而且由驱动门控。
-- CE 的 DLL 窗口 100% 是枚举 / 展示 / 跳转——没有加载、卸载或注入。
+- CE 的 DLL 窗口是枚举 / 展示 / 跳转。这里唯一的动作是页面请求的卸载，也就是 CE 的「卸载这个 DLL」，外加下面写的保护栏——不加载、不注入。
 - CE 的线程窗口约有 60-65% 是挂起 / 恢复 / 修改寄存器 / 清调试寄存器。这里一件都不做。
 
-本批刻意排除在范围之外：修改内存保护属性、挂起或恢复线程、设置线程优先级、加载或卸载模块、跨进程枚举、符号 / PDB 名称、`NtQueryInformationThread` 这类未文档化的 API，以及区域表的映射文件名列（CE 的 `Extra` 列，需要 `GetMappedFileName`）。
+本批刻意排除在范围之外：修改内存保护属性、挂起或恢复线程、设置线程优先级、加载模块、跨进程枚举、符号 / PDB 名称、`NtQueryInformationThread` 这类未文档化的 API，以及区域表的映射文件名列（CE 的 `Extra` 列，需要 `GetMappedFileName`）。
 
-只读不是靠自觉：线程遍历一开始就用 `OpenThread(THREAD_QUERY_LIMITED_INFORMATION)` 打开线程，所以在访问掩码上挂起或终止线程就不可能。
+只读不是靠自觉：线程遍历一开始就用 `OpenThread(THREAD_QUERY_LIMITED_INFORMATION)` 打开线程，所以在访问掩码上挂起或终止线程就不可能。模块卸载是那个例外，它换来的是显式的保护栏：宿主 exe 与本 DLL 按模块句柄拒绝（身份，而不是宿主能写出来的路径），并且给的 base 必须是一个模块的起始地址——`GetModuleHandleExW` 先回答这个问题，然后才轮到加载器。
 
 ## ABI
 
@@ -23,7 +23,10 @@
 CE_API int CE_CALL CE_GetRegionsV2(CeRegionInfoV2* regions, uint32_t capacity, uint32_t* required);
 CE_API int CE_CALL CE_GetModulesV2(CeModuleInfoV2* modules, uint32_t capacity, uint32_t* required);
 CE_API int CE_CALL CE_GetThreadsV2(CeThreadInfoV2* threads, uint32_t capacity, uint32_t* required);
+CE_API int CE_CALL CE_UnloadModuleV2(uint64_t base);
 ```
+
+`CE_UnloadModuleV2` 收的是模块枚举报出来的 base，而不是名字：名字是宿主能控制的字符串，而 `FreeLibrary` 本来也需要句柄。`0` 或不是模块起始地址时返回 `CE_INVALID_ARGUMENT`；宿主 exe 与本 DLL 返回 `CE_UNSUPPORTED`。其余会走到 `FreeLibrary`——它仍可能拒绝，也可能把另一个线程正在跑的代码解除映射：调用方应当先问过人类。
 
 填充数组，而不是「先计数、再按下标取」：一次调用返回一份一致的快照，没有代际、缓存或刷新握手。
 
@@ -64,7 +67,11 @@ CE_API int CE_CALL CE_GetThreadsV2(CeThreadInfoV2* threads, uint32_t capacity, u
 
 ## UI
 
-这三个标签页是导航索引 3/4/5（总共七页），由 `web/js/views.js` 根据桥推送的 `views` 区块渲染。一个页面由说明行、表格、计数标签，以及「上一页 / 下一页 / 刷新」组成。标签文字是 `<Kind>: <n> total | <first> - <last> | 512/page`，首次加载之前是 `<Kind>: not loaded`。
+这三个标签页是导航索引 3/4/5（总共七页），由 `web/js/views.js` 根据桥推送的 `views` 区块渲染。一个页面由说明行、表格、计数标签、「上一页 / 下一页 / 刷新」组成，只在 Modules 上还有「Unload selected」。标签文字是 `<Kind>: <n> total | <first> - <last> | 512/page`，首次加载之前是 `<Kind>: not loaded`。
+
+三张表的每一列都可排序：点击会带着列号发出 `view.sort`，由运行时决定这是新列（升序）还是同一列再来一次（反向）。排序在桥里的快照上做，不在浏览器里做——浏览器只有一页 512 行，排那些只会给窗口排序而不是给表排序。数字按数字排（base 不是字符串 `0x...`），名称按大小写不敏感排，排好的列通过 `sortColumn` / `sortDescending` 回传，表头据此画箭头。刷新会把顺序重新施加到刚枚举出的行上。
+
+模块表还是唯一带选中的表：点击一行即选中，「Unload selected」会先问一次（`window.confirm`），命令发出去的是当时屏幕上那一行的 base。应答是重新读过的列表，因为页面正在翻的那份快照已经不再描述宿主了。
 
 **快照由桥持有**：`Session` 里的行数组就是那份快照，翻页只重绘当前切片。每次翻页都重新枚举，会让行在读者眼皮底下移动，还会把遍历成本乘以页数。
 
@@ -74,11 +81,14 @@ CE_API int CE_CALL CE_GetThreadsV2(CeThreadInfoV2* threads, uint32_t capacity, u
 
 - `runtime_v2_tests`：三个 `sizeof`；数量查询；区域从 `lpMinimumApplicationAddress` 起平铺整个地址空间，并覆盖调用者的栈地址，且 `MEM_COMMIT` 与 `MEM_FREE` 两者都在；模块表包含主 exe；恰好一个线程被标记为 current；缓冲区过短时什么都不写。取快照会与活动中的宿主竞争——区域会在大小查询与填充之间新增——所以 `fill_view` 会重试（四次，每次重读数量），断言也只依赖那些在活动宿主下依然成立的不变量（`tests/runtime_v2_tests.cpp`）。
 - `typed_tests`：同样的检查直接走 `ce::Core`，外加 `shutdown()` 之后三者都返回 `CE_NOT_RUNNING`。
-- `bridge_tests`：三种视图的 `view.load`、行内容（区域各列、模块路径、线程 current 标记）与标签，模式 A（假 `CeApi`）与模式 B（真 DLL）一视同仁。
+- `bridge_tests`：三种视图的 `view.load`、行内容（区域各列、模块路径、线程 current 标记）与标签，模式 A（假 `CeApi`）与模式 B（真 DLL）一视同仁。卸载的拒绝路径两种模式都测——模式 B 拿真实核心依次试零 base、非模块地址、宿主 exe 和 DLL 自身，这些都不会真的解除任何映射——模式 A 则把命令走一遍：不在页上的 base 被拒、核心的拒绝原样透传、成功时以重新读过的列表应答。排序同样被钉住：列与方向回传、顺序随之改变、再次点击同一表头即反向。
+- `typed_tests`：卸载的保护栏直接走 `ce::Core`，其中包括一个本进程已持有引用的模块（`LoadLibraryW` 一个 user32，再由卸载把这份引用放掉），以及 `shutdown()` 之后的 `CE_NOT_RUNNING`。
+- `tests/web/sort.test.js`：根据运行时报告的内容，判断哪个表头带标记、指向哪边。
 
 ## 已知边界
 
 - 模块路径是内联的，定长 260（`MAX_PATH`），更长则截断；线程描述定长 64。
 - 区域表包含 Free 与 Reserve，所以它的行数比「已提交区域」多；`state == MEM_FREE` 的行，其 `type` 与 `allocation_protect` 为 0，`protect` 为 `PAGE_NOACCESS`。
 - 没有任何轮询，所以数据就是按下「刷新」那一刻的状态；在活动宿主里，线程与区域会持续变化。
+- 卸载不可恢复、也不可控：`FreeLibrary` 在宿主进程里执行，如果宿主还在跑那个模块——对它自己加载的模块来说这是常态——宿主可能就此消失。保护栏只挡掉明显的错误；真正隔在点击与加载器之间的，是那个确认对话框。
 - `CreateToolhelp32Snapshot` 的调用位置限制见 `docs/COMPATIBILITY_CN.md`——不要从 `DllMain` 调用它。

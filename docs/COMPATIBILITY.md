@@ -366,10 +366,12 @@ limits, not scan-count limits. The exact acceptable fields are defined by the
 source and the tests; arbitrary old CT files are not claimed to be universally
 compatible.
 
-## Process views (read-only)
+## Process views
 
 `CE_GetRegionsV2` / `CE_GetModulesV2` / `CE_GetThreadsV2` each return one
-consistent snapshot per call — no generation, cache or refresh handshake.
+consistent snapshot per call — no generation, cache or refresh handshake. The
+snapshots are read-only; the one command that changes host state is
+`CE_UnloadModuleV2`, described at the end of this section.
 
 | Rule | Detail |
 |---|---|
@@ -381,6 +383,19 @@ consistent snapshot per call — no generation, cache or refresh handshake.
 
 `src/bridge/ui_bridge.cpp` pins the 48/552/168-byte layouts with
 `static_assert`, and `runtime_v2_tests` asserts them at run time.
+
+**Unload**
+
+`CE_UnloadModuleV2(uint64_t base)` releases one module of the host process,
+named by the `base` a module enumeration reported. It is synchronous and has no
+generation: the caller re-enumerates afterwards.
+
+| Rule | Detail |
+|---|---|
+| Identity | The base must be the start of a loaded module. `GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, ...)` answers that before the loader is involved; a `0` or an address inside a module's body returns `CE_INVALID_ARGUMENT`. |
+| Refusals | The host executable and this DLL return `CE_UNSUPPORTED`. Everything else reaches `FreeLibrary`, which may refuse it in turn. |
+| Risk | The module may be in use. `FreeLibrary` can unmap code another thread is running, and the host process can die. There is no undo, and no protection beyond the two refusals above. |
+| Effect | Only the reference count moves. A module loaded twice needs two releases, and a module the system or another component holds stays mapped. |
 
 **Regions**
 

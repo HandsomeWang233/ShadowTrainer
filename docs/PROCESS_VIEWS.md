@@ -2,33 +2,39 @@
 
 [English](PROCESS_VIEWS.md) | [中文](PROCESS_VIEWS_CN.md)
 
-Three read-only views of the hosting process — its memory regions, its loaded
-modules and its threads — as tabs in the WebView page. They only enumerate and
-display; nothing here mutates host state. This file covers the ABI they expose,
-how the walks work, how the page drives them, and where they stop.
+Three views of the hosting process — its memory regions, its loaded modules and
+its threads — as tabs in the WebView page. Regions and Threads only enumerate and
+display; Modules carries one verb, an unload, which is the single place in this
+subsystem that changes host state. This file covers the ABI they expose, how the
+walks work, how the page drives them, and where they stop.
 
 ## Scope
 
 The reference is CE's `formmemoryregionsunit.pas` (468 lines),
 `frmEnumerateDLLsUnit.pas` (399) and `frmThreadlistunit.pas` (1194), of which
-only "enumerate + display" is taken:
+"enumerate + display" is taken, plus one action:
 
 - The only host-mutating action in CE's region window is "set writable", and it
   is gated by the driver.
-- CE's DLL window is 100% enumeration / display / navigation — no load, unload
-  or inject.
+- CE's DLL window is enumeration / display / navigation. The one action here is
+  the unload the page asks for, which is CE's "unload this DLL" with the rails
+  described below - no load and no inject.
 - Roughly 60-65% of CE's thread window is suspend / resume / register edits /
   debug-register clears. None of it is done here.
 
 Deliberately out of scope for this batch: changing memory protection, suspending
-or resuming threads, setting thread priority, loading or unloading modules,
-cross-process enumeration, symbols / PDB names, undocumented APIs such as
+or resuming threads, setting thread priority, loading modules, cross-process
+enumeration, symbols / PDB names, undocumented APIs such as
 `NtQueryInformationThread`, and the region table's mapped file name column (CE's
 `Extra` column, which needs `GetMappedFileName`).
 
 Read-only is not left to discipline: the thread walk opens with
 `OpenThread(THREAD_QUERY_LIMITED_INFORMATION)`, so suspending or terminating a
-thread is impossible by access mask.
+thread is impossible by access mask. The module unload is the exception, and it
+gets explicit rails instead: the host executable and this DLL are refused by
+module handle (identity, not a path the host could have written), and the base
+has to be the start of a module the caller could name - `GetModuleHandleExW`
+answers that question before the loader is asked to do anything.
 
 ## ABI
 
@@ -37,7 +43,15 @@ thread is impossible by access mask.
 CE_API int CE_CALL CE_GetRegionsV2(CeRegionInfoV2* regions, uint32_t capacity, uint32_t* required);
 CE_API int CE_CALL CE_GetModulesV2(CeModuleInfoV2* modules, uint32_t capacity, uint32_t* required);
 CE_API int CE_CALL CE_GetThreadsV2(CeThreadInfoV2* threads, uint32_t capacity, uint32_t* required);
+CE_API int CE_CALL CE_UnloadModuleV2(uint64_t base);
 ```
+
+`CE_UnloadModuleV2` takes the base a module enumeration reported, not a name:
+a name is a string the host controls, and `FreeLibrary` needs the handle anyway.
+It answers `CE_INVALID_ARGUMENT` for `0` or for an address that is not a module
+start, and `CE_UNSUPPORTED` for the host executable and for this DLL. Anything
+else reaches `FreeLibrary`, which may still refuse it, and may unmap code another
+thread is running - the caller is expected to have asked a human first.
 
 Fill-an-array rather than "count, then fetch by index": one call returns one
 consistent snapshot, with no generation, cache or refresh handshake.
@@ -100,9 +114,24 @@ only reads `stopped`.
 
 The three tabs are navigation indices 3/4/5 (seven pages in all) and are rendered
 by `web/js/views.js` from the `views` section the bridge pushes. A page is a hint
-line, a table, a count label, Previous / Next page / Refresh. The label reads
+line, a table, a count label, Previous / Next page / Refresh, and - on Modules
+only - Unload selected. The label reads
 `<Kind>: <n> total | <first> - <last> | 512/page`, or `<Kind>: not loaded`
 before the first load.
+
+Every column of all three tables sorts: a click sends `view.sort` with the column
+index, and the runtime decides whether that is a new column (ascending) or the
+same one again (reversed). Sorting is done on the snapshot in the bridge and not
+in the browser, because the browser holds one page of 512 rows and sorting those
+would order the window rather than the table. Numbers sort as numbers (a base is
+not the string `0x...`), names sort case-insensitively, and the sorted column is
+reported back as `sortColumn` / `sortDescending` so the header can carry the
+caret. A refresh re-applies the order to the freshly enumerated rows.
+
+The module table is also the one table with a selection: clicking a row picks it,
+`Unload selected` asks first (`window.confirm`), and the command sends the base
+of the row that was on screen. The reply is the re-read list, because the
+snapshot the page was paging through no longer describes the host.
 
 **The bridge holds the snapshot**: the row arrays inside `Session` are that
 snapshot, and paging only repaints the current slice. Re-enumerating on every
@@ -130,7 +159,18 @@ is running records a pending flag, and the existing 100 ms poll timer (bare id 1
   `CE_NOT_RUNNING` from all three after `shutdown()`.
 - `bridge_tests`: `view.load` for all three kinds, row content (region columns,
   module path, thread current marker) and labels, in mode A (fake `CeApi`) and
-  mode B (the real DLL) alike.
+  mode B (the real DLL) alike. The unload's refusals are checked in both modes -
+  mode B calls the real core with the zero base, a non-module address, the host
+  executable and the DLL itself, none of which unmaps anything - and mode A walks
+  the command: a base that is not on the page is refused, a refusal from the core
+  is passed through, and a success answers with the list re-read. Sorting is
+  pinned the same way: the column and direction come back, the order changes
+  under it, and clicking the same header reverses.
+- `typed_tests`: the unload's rails through `ce::Core` directly, including a
+  module this process already holds a reference to (a `LoadLibraryW` of user32
+  that the unload releases again), and `CE_NOT_RUNNING` after `shutdown()`.
+- `tests/web/sort.test.js`: which header carries the marker and which way it
+  points, given what the runtime reported.
 
 ## Known boundaries
 
@@ -141,5 +181,10 @@ is running records a pending flag, and the existing 100 ms poll timer (bare id 1
   `allocation_protect` set to 0, and `protect` set to `PAGE_NOACCESS`.
 - Nothing polls, so the data is the state at the moment Refresh was pressed;
   threads and regions keep changing in a live host.
+- The unload is not recoverable and not contained: `FreeLibrary` runs in the host
+  process, and if the host is still executing that module - which is normal for
+  anything it loaded for a reason - the host can die. The rails only keep the
+  obvious mistakes out; the confirmation dialog is what stands between a click
+  and the loader.
 - `CreateToolhelp32Snapshot`'s call-site restriction is in
   `docs/COMPATIBILITY.md` — do not call it from `DllMain`.

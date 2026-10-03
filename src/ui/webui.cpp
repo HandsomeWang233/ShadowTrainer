@@ -35,6 +35,10 @@ constexpr UINT toggle_message = WM_APP + 3;
 constexpr UINT wake_message = WM_APP + 5;
 // Posted by the ticker thread once per composition; see start_ticker.
 constexpr UINT tick_message = WM_APP + 6;
+// A message that takes at least this long is treated as a stall and its time is
+// handed back to the startup cover's clock, so the animation holds the beat
+// instead of skipping it. See the message loop.
+constexpr ULONGLONG stall_credit_ms = 8;
 constexpr UINT_PTR poll_timer = 1, hotkey_timer = 2;
 constexpr wchar_t window_property[] = L"SHADOWTRAINER_WINDOW";
 constexpr int default_width = 1360, default_height = 900;
@@ -47,15 +51,9 @@ constexpr int caption_height = 34;
 constexpr DWORD dwm_window_corner_preference = 33;
 constexpr int dwm_corner_round = 2;
 
-std::wstring trim(std::wstring_view text) {
-    const auto first = text.find_first_not_of(L" \t\r\n");
-    if (first == std::wstring_view::npos) return {};
-    const auto last = text.find_last_not_of(L" \t\r\n");
-    return std::wstring(text.substr(first, last - first + 1));
-}
-
 // The old UI's table dialog, kept as-is: same filter, same default extension,
-// and the same hook that cancels the dialog when the session is stopping.
+// and the same title rename on init. A stop that lands while the dialog is up
+// is handled once it closes; see choose_table_file.
 UINT_PTR CALLBACK table_dialog_hook(HWND dialog, UINT message, WPARAM, LPARAM) {
     if (message == WM_NOTIFY) return 0;
     if (message == WM_INITDIALOG) SetWindowTextW(dialog, L"ShadowTrainer cheat table");
@@ -222,7 +220,20 @@ public:
             // and the backtick has to reach the page rather than being eaten as a
             // dialog accelerator.
             TranslateMessage(&message);
+            // The cover is drawn on this thread, so any work that blocks it would
+            // otherwise skip that much of the sequence. WebView2's own startup does
+            // exactly that about 0.8 s in -- a Chrome_MessageWindow message runs
+            // for ~115 ms -- which lands right where the word hands over to the
+            // letters, and skipping that stretch popped the first letter into
+            // place. Handing the lost time back to the cover's clock turns the
+            // jump into a held beat: the next frame continues where the last one
+            // stopped. The threshold keeps ordinary messages from stretching the
+            // animation.
+            const ULONGLONG dispatch_started = now_ms();
             DispatchMessageW(&message);
+            const ULONGLONG dispatch_spent = now_ms() - dispatch_started;
+            if (boot_started_ != 0 && !boot_revealed_ && dispatch_spent >= stall_credit_ms)
+                boot_started_ += dispatch_spent;
             // The stop path has closed and released the WebView by now. Anything
             // still queued -- including messages the WebView posted for its own
             // windows, which live in this process -- would be dispatched into
@@ -460,18 +471,11 @@ private:
             session_->request_stop();
         }
         if (dialog_active_) return;   // the dialog's own loop finishes the teardown
-        session_->request_stop();
         published_.store(nullptr);
         // No timer may fire into a closing WebView.
         KillTimer(hwnd_, poll_timer);
         KillTimer(hwnd_, hotkey_timer);
-        host_.shutdown();
-        // The window goes last: destroying it destroys the WebView's child
-        // windows too, so no queued message can still reach a closed controller.
-        if (hwnd_) {
-            DestroyWindow(hwnd_);
-            hwnd_ = nullptr;
-        }
+        teardown();
         // The teardown itself runs on the message loop's stack; see teardown().
         finished_ = true;
     }
@@ -598,8 +602,8 @@ private:
     // this window plays while WebView2 comes up. It is split out so it can be
     // rendered off-screen and looked at; see the note at the top of cover.hpp.
 
-    // Advances the cover on the fast timer, so it runs at the frame rate rather
-    // than at whatever the window happens to repaint itself at.
+    // Ends the cover once its clock has run out, and hands the window to the
+    // page when the WebView is ready.
     void pump_boot() {
         if (boot_revealed_) return;
         if (boot_started_ == 0) return;   // nothing painted yet, so no clock to keep
@@ -634,9 +638,6 @@ private:
     void paint_boot(HDC dc) {
         RECT client{};
         GetClientRect(hwnd_, &client);
-        // The sequence starts on the first frame the window actually paints. It
-        // is created and shown before the WebView is, and letting the timer
-        // start the clock would spend the opening on a window nobody can see yet.
         const int width = client.right - client.left;
         const int height = client.bottom - client.top;
         // The sequence starts on the first frame the window actually paints. It
@@ -769,7 +770,7 @@ private:
     bool finished_ = false;
     bool stopping_ = false;
     bool dialog_active_ = false;
-    int painted_state_ = -1;   // -1 = nothing painted yet; see paint_boot
+    int painted_state_ = -1;   // last WebView state pushed; see push_events
     bool dwm_tried_ = false;
     bool dwm_rounded_ = false;
     bool region_applied_ = false;

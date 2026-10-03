@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdlib>
-#include <cstring>
 #include <cwctype>
 #include <limits>
 
@@ -312,6 +311,7 @@ CeApi production_api() noexcept {
     api.get_regions_v2 = &CE_GetRegionsV2;
     api.get_modules_v2 = &CE_GetModulesV2;
     api.get_threads_v2 = &CE_GetThreadsV2;
+    api.unload_module_v2 = &CE_UnloadModuleV2;
     api.pointer_scan_v2 = &CE_PointerScanV2;
     api.cancel_pointer_scan_v2 = &CE_CancelPointerScanV2;
     api.get_pointer_scan_status_v2 = &CE_GetPointerScanStatusV2;
@@ -401,7 +401,6 @@ std::wstring Session::dispatch(const std::wstring& command) {
 
 std::wstring Session::handle(long long id, const std::wstring& name, const json::Value* args) {
     if (name == L"hello") {
-        hello_seen_ = true;
         return reply(id, full_model());
     }
     Answer answer;

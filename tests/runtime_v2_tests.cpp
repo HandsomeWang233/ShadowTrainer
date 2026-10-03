@@ -23,11 +23,16 @@ bool fill_view(std::vector<T>& items,uint32_t required,Fetch fetch){
 }
 void visibility(HWND w,bool visible){for(int i=0;i<100&&bool(IsWindowVisible(w))!=visible;++i)Sleep(10);check(bool(IsWindowVisible(w))==visible,visible?"menu visible":"menu hidden");}
 int wmain(int argc,wchar_t** argv){
- if(argc!=2)return 2;
+ // `--hold N` keeps the first window open so a human can watch the startup cover
+ // and the page it reveals. Not a check: the whole run is about a second, which
+ // is over before the cover ends, so a plain run is only ever a flash.
+ int hold_seconds=0;const wchar_t* dll_path=nullptr;
+ for(int i=1;i<argc;++i){if(wcscmp(argv[i],L"--hold")==0&&i+1<argc)hold_seconds=_wtoi(argv[++i]);else if(!dll_path)dll_path=argv[i];}
+ if(!dll_path)return 2;
  HMODULE module=nullptr;
  decltype(&CE_RequestStop) stop=nullptr; decltype(&CE_WaitStopped) wait=nullptr;
  try{
-  module=LoadLibraryW(argv[1]);check(module!=nullptr,"load stage2 DLL");
+  module=LoadLibraryW(dll_path);check(module!=nullptr,"load stage2 DLL");
 #define FN(name) auto name=load<decltype(&::name)>(module,#name)
   FN(CE_GetState);FN(CE_GetApiVersion);FN(CE_GetApiVersionV2);
   stop=load<decltype(stop)>(module,"CE_RequestStop");wait=load<decltype(wait)>(module,"CE_WaitStopped");
@@ -41,6 +46,7 @@ int wmain(int argc,wchar_t** argv){
   check(CE_GetState()==CE_RUNNING,"automatic v2 runtime ready");
   check(CE_GetApiVersion()==1&&CE_GetApiVersionV2()==2,"v1 and v2 versions preserved");
   HWND window=nullptr;EnumWindows(locate,reinterpret_cast<LPARAM>(&window));check(window!=nullptr,"stable menu window property");visibility(window,true);
+  if(hold_seconds>0){std::printf("holding the first window for %d second(s)\n",hold_seconds);Sleep(static_cast<DWORD>(hold_seconds)*1000);}
   check(CE_ToggleWindowV2()==CE_OK,"toggle dispatch");visibility(window,false);
   check(CE_ToggleWindowV2()==CE_OK,"toggle hidden window dispatch");visibility(window,true);
   check(CE_ShowWindow()==CE_OK,"v1 show remains show-only");visibility(window,true);

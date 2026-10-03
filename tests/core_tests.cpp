@@ -6,7 +6,6 @@
 #endif
 #include <windows.h>
 #include "core.hpp"
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>

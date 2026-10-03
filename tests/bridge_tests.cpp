@@ -46,15 +46,6 @@ bool contains(const std::wstring& haystack, const wchar_t* needle) {
 
 // ---- reply helpers ---------------------------------------------------------------
 
-std::wstring send(Session& session, const wchar_t* command, json::Value* parsed_out = nullptr) {
-    const std::wstring text = session.dispatch(command);
-    if (parsed_out && !json::parse(text, *parsed_out)) {
-        std::fprintf(stderr, "FAIL: reply is not valid JSON: %ls\n", text.c_str());
-        std::exit(1);
-    }
-    return text;
-}
-
 // Asserts success and returns the reply's data object (never null on success).
 const json::Value* send_ok(Session& session, const wchar_t* command, json::Value& storage) {
     ++checks;
@@ -150,7 +141,6 @@ int64_t field_int(const json::Value* node, const wchar_t* name, int64_t fallback
 
 struct FakeCore {
     bool hold_scan = false;              // keep the scan "running" for busy tests
-    bool cancel_requested = false;
     CeScanRequestV2 last_request{};
     // The request's value pointers belong to the worker's captured strings, which
     // die with the thread; the fake keeps copies so assertions are not a
@@ -160,7 +150,6 @@ struct FakeCore {
     CeScanStatusV2 status{};
     CeScanInfoV2 info{};
     std::vector<uint64_t> result_addresses;
-    int next_scan_status = CE_OK;
     int busy_status_calls = 0;           // simulate CE_BUSY snapshot misses
 
     struct Record {
@@ -182,7 +171,10 @@ struct FakeCore {
 
     CePointerScanStatusV2 pointer{};
     CePointerScanResultV2 pointer_result{};
-    bool pointer_active = false;
+
+    uint64_t unloaded_base = 0;          // last base handed to unload_module_v2
+    int unload_calls = 0;
+    int unload_status = CE_OK;           // what the next unload answers
 
     std::wstring ct_path;
     uint64_t last_write_value_address = 0;
@@ -262,7 +254,6 @@ int CE_CALL fake_get_scan_status(CeScanStatusV2* status) {
         --core.busy_status_calls;
         return CE_BUSY;
     }
-    if (core.next_scan_status != CE_OK) return core.next_scan_status;
     // Letting go of hold_scan ends the fake scan, the way a real cancellation
     // does: the session must stop treating the job as busy on the next tick.
     if (!core.hold_scan && core.status.active) {
@@ -351,7 +342,7 @@ int CE_CALL fake_new_scan() {
 }
 
 int CE_CALL fake_undo_scan() { return CE_OK; }
-void CE_CALL fake_cancel_scan() { core.cancel_requested = true; }
+void CE_CALL fake_cancel_scan() {}
 
 int CE_CALL fake_upsert_record(const CeRecordRequestV2* request, uint64_t* id) {
     if (!request || !id) return CE_INVALID_ARGUMENT;
@@ -467,6 +458,18 @@ int CE_CALL fake_get_modules(CeModuleInfoV2* items, uint32_t capacity, uint32_t*
     return CE_OK;
 }
 
+int CE_CALL fake_unload_module(uint64_t base) {
+    ++core.unload_calls;
+    if (core.unload_status != CE_OK) return core.unload_status;
+    core.unloaded_base = base;
+    // A real unload takes the module out of the next enumeration, so the reply's
+    // re-read list is one row shorter.
+    core.modules.erase(std::remove_if(core.modules.begin(), core.modules.end(),
+                                      [base](const CeModuleInfoV2& module) { return module.base == base; }),
+                       core.modules.end());
+    return CE_OK;
+}
+
 int CE_CALL fake_get_threads(CeThreadInfoV2* items, uint32_t capacity, uint32_t* required) {
     if (!required) return CE_INVALID_ARGUMENT;
     *required = static_cast<uint32_t>(core.threads.size());
@@ -483,8 +486,8 @@ int CE_CALL fake_pointer_scan(const CePointerScanRequestV2* request) {
     if (!request) return CE_INVALID_ARGUMENT;
     core.pointer.size = sizeof(core.pointer);
     core.pointer.version = CE_V2_VERSION;
-    core.pointer.phase = core.pointer_active ? CE_SCAN_WRITING : CE_SCAN_COMPLETED;
-    core.pointer.active = core.pointer_active ? 1u : 0u;
+    core.pointer.phase = CE_SCAN_COMPLETED;
+    core.pointer.active = 0;
     core.pointer.total = 1;
     core.pointer.processed = 12;
     core.pointer.generation = 21;
@@ -553,6 +556,7 @@ CeApi fake_api() {
     api.get_regions_v2 = &fake_get_regions;
     api.get_modules_v2 = &fake_get_modules;
     api.get_threads_v2 = &fake_get_threads;
+    api.unload_module_v2 = &fake_unload_module;
     api.pointer_scan_v2 = &fake_pointer_scan;
     api.cancel_pointer_scan_v2 = &fake_cancel_pointer_scan;
     api.get_pointer_scan_status_v2 = &fake_pointer_status;
@@ -796,6 +800,44 @@ void mode_a() {
         check(core.records.empty(), "an opaque row can still be removed");
     }
 
+    // ---- record sorting
+    {
+        // Two records in the wrong alphabetical order, so the sort has something
+        // to change and the change is visible in what a display index means.
+        FakeCore::Record beta;
+        beta.id = 11;
+        beta.type = CE_TYPE_U32;
+        beta.resolved = 0x3000;
+        beta.description = L"beta";
+        beta.address.base = 0x3000;
+        core.records.push_back(beta);
+        FakeCore::Record alpha;
+        alpha.id = 12;
+        alpha.type = CE_TYPE_U32;
+        alpha.resolved = 0x2000;
+        alpha.description = L"alpha";
+        alpha.address.base = 0x2000;
+        core.records.push_back(alpha);
+        json::Value storage;
+        send_ok(session, L"{\"id\":62,\"cmd\":\"record.refresh\"}", storage);
+        const json::Value* data =
+            send_ok(session, L"{\"id\":63,\"cmd\":\"record.sort\",\"args\":{\"column\":1}}", storage);
+        check(field_int(data, L"sortColumn") == 1 && !field_bool(data, L"sortDescending"),
+              "the record sort reports its column and direction");
+        // Display position 0 is now the alphabetically first record, not the first
+        // one the core holds.
+        const json::Value* selected =
+            send_ok(session, L"{\"id\":64,\"cmd\":\"record.select\",\"args\":{\"index\":0}}", storage);
+        check(field_text(selected, L"description") == L"alpha",
+              "the order decides what a display position means");
+        data = send_ok(session, L"{\"id\":65,\"cmd\":\"record.sort\",\"args\":{\"column\":1}}", storage);
+        check(field_bool(data, L"sortDescending"), "clicking the same column again reverses it");
+        selected = send_ok(session, L"{\"id\":66,\"cmd\":\"record.select\",\"args\":{\"index\":0}}", storage);
+        check(field_text(selected, L"description") == L"beta", "and the reversed order is shown");
+        core.records.clear();
+        send_ok(session, L"{\"id\":67,\"cmd\":\"record.refresh\"}", storage);
+    }
+
     // ---- CT file round trip through an explicit path
     {
         json::Value storage;
@@ -953,6 +995,63 @@ void mode_a() {
         check(thread_rows->items[0].items[4].as_string() == L"Current", "the current thread is marked");
         check(contains(field_text(views->find(L"regions"), L"label"), L"1 total"),
               "the view label counts its rows");
+        check(views->find(L"modules")->find(L"ids")->items[0].as_string() == L"2146435072",
+              "a module row carries the base its commands will name it by");
+    }
+
+    // ---- module unload
+    {
+        json::Value storage;
+        // A stale page can only ask for a row it was actually shown, and only a
+        // module can be asked for at all.
+        expect_failure(session, L"{\"id\":49,\"cmd\":\"view.unload\",\"args\":{\"kind\":\"modules\",\"base\":\"4096\"}}",
+                       CE_INVALID_ARGUMENT, "a base that is not in the list is refused");
+        expect_failure(session, L"{\"id\":50,\"cmd\":\"view.unload\",\"args\":{\"kind\":\"regions\",\"base\":\"1048576\"}}",
+                       CE_INVALID_ARGUMENT, "only a module can be unloaded");
+        check(core.unload_calls == 0, "neither refusal reached the core");
+        core.unload_status = CE_ACCESS_ERROR;
+        expect_failure(session, L"{\"id\":51,\"cmd\":\"view.unload\",\"args\":{\"kind\":\"modules\",\"base\":\"2146435072\"}}",
+                       CE_ACCESS_ERROR, "a refusal from the core is passed through");
+        core.unload_status = CE_OK;
+        const json::Value* data = send_ok(
+            session, L"{\"id\":52,\"cmd\":\"view.unload\",\"args\":{\"kind\":\"modules\",\"base\":\"2146435072\"}}", storage);
+        check(core.unloaded_base == 0x7FF00000, "the unload names the module by its base");
+        check(data && field_int(data, L"count") == 0, "the reply is the module list, re-read after the unload");
+        check(contains(field_text(data, L"label"), L"0 total"), "the unloaded module is gone from it");
+        // The fake erased the module the way the loader would. Put it back: the
+        // pointer test below needs a static base to find.
+        core.modules.push_back(module);
+    }
+
+    // ---- sorting
+    {
+        // A second module gives the order something to change: the enumeration
+        // runs by base, and the names are deliberately the other way round.
+        CeModuleInfoV2 second{};
+        second.base = 0x7FF10000;
+        second.module_size = 0x1000;
+        std::swprintf(second.path, std::size(second.path), L"%s", L"C:\\host\\alpha.dll");
+        core.modules.push_back(second);
+        json::Value storage;
+        // The unload left the loaded view holding an empty list, and a load is
+        // once per page: a refresh is what re-reads the host.
+        send_ok(session, L"{\"id\":53,\"cmd\":\"view.refresh\",\"args\":{\"kind\":\"modules\"}}", storage);
+        const json::Value* data = send_ok(
+            session, L"{\"id\":54,\"cmd\":\"view.sort\",\"args\":{\"kind\":\"modules\",\"column\":2}}", storage);
+        check(field_int(data, L"sortColumn") == 2 && !field_bool(data, L"sortDescending"),
+              "the reply reports the column and the direction");
+        const json::Value* rows = data->find(L"rows");
+        check(rows && rows->items.size() == 2 &&
+                  rows->items[0].items[2].as_string() == L"alpha.dll",
+              "sorting by name puts the alphabetically first module on top");
+        data = send_ok(session, L"{\"id\":55,\"cmd\":\"view.sort\",\"args\":{\"kind\":\"modules\",\"column\":2}}", storage);
+        rows = data->find(L"rows");
+        check(field_bool(data, L"sortDescending") && rows->items[0].items[2].as_string() == L"host.exe",
+              "clicking the same header again reverses it");
+        data = send_ok(session, L"{\"id\":56,\"cmd\":\"view.sort\",\"args\":{\"kind\":\"modules\",\"column\":0}}", storage);
+        check(field_int(data, L"sortColumn") == 0 && !field_bool(data, L"sortDescending"),
+              "a different column starts ascending");
+        core.modules.pop_back();
     }
 
     // ---- pointer scan
@@ -1044,6 +1143,7 @@ CeApi loaded_api(HMODULE dll) {
     api.get_regions_v2 = symbol<int(CE_CALL*)(CeRegionInfoV2*, uint32_t, uint32_t*)>(dll, "CE_GetRegionsV2");
     api.get_modules_v2 = symbol<int(CE_CALL*)(CeModuleInfoV2*, uint32_t, uint32_t*)>(dll, "CE_GetModulesV2");
     api.get_threads_v2 = symbol<int(CE_CALL*)(CeThreadInfoV2*, uint32_t, uint32_t*)>(dll, "CE_GetThreadsV2");
+    api.unload_module_v2 = symbol<int(CE_CALL*)(uint64_t)>(dll, "CE_UnloadModuleV2");
     api.pointer_scan_v2 = symbol<int(CE_CALL*)(const CePointerScanRequestV2*)>(dll, "CE_PointerScanV2");
     api.cancel_pointer_scan_v2 = symbol<int(CE_CALL*)()>(dll, "CE_CancelPointerScanV2");
     api.get_pointer_scan_status_v2 = symbol<int(CE_CALL*)(CePointerScanStatusV2*)>(
@@ -1061,7 +1161,7 @@ bool api_complete(const CeApi& api) {
            api.resolve_address_v2 && api.resolve_pointer_v2 && api.upsert_record_v2 &&
            api.record_count_v2 && api.get_record_v2 && api.remove_record_v2 && api.write_record_v2 &&
            api.freeze_record_v2 && api.save_table_v2 && api.load_table_v2 && api.get_regions_v2 &&
-           api.get_modules_v2 && api.get_threads_v2 && api.pointer_scan_v2 &&
+           api.get_modules_v2 && api.get_threads_v2 && api.unload_module_v2 && api.pointer_scan_v2 &&
            api.cancel_pointer_scan_v2 && api.get_pointer_scan_status_v2 &&
            api.get_pointer_scan_result_v2;
 }
@@ -1165,7 +1265,7 @@ void mode_b(const char* dll_path) {
         check(bytes.substr(80, 8) == L"bebafeca", "byte order matches the host layout");
     }
 
-    // Records: add, select, freeze, write, remove.
+    // Records: add, select, freeze on/off, remove.
     wchar_t record_command[512]{};
     std::swprintf(record_command, std::size(record_command),
                   L"{\"id\":5,\"cmd\":\"record.add\",\"args\":{\"base\":\"%llX\",\"offsets\":\"\","
@@ -1202,9 +1302,26 @@ void mode_b(const char* dll_path) {
               "the host has at least one module");
         check(views && views->find(L"threads")->find(L"total")->as_u64() > 0,
               "the host has at least one thread");
+        // Sorting the real host's regions by size: the reply is the re-ordered
+        // page, and the column and direction come back for the header.
+        const json::Value* sorted = send_ok(
+            session, L"{\"id\":15,\"cmd\":\"view.sort\",\"args\":{\"kind\":\"regions\",\"column\":1}}", storage);
+        check(sorted && field_int(sorted, L"sortColumn") == 1 && !field_bool(sorted, L"sortDescending"),
+              "the real view sorts and reports its column");
+        const json::Value* rows = sorted ? sorted->find(L"rows") : nullptr;
+        check(rows && rows->items.size() > 0, "the sorted page has rows");
     }
 
-    // A pointer scan over the planted chain, then a CT round trip.
+    // The unload rails, against the real core. Every one of these is refused, so
+    // nothing in this process is actually unmapped by the test.
+    check(api.unload_module_v2(0) == CE_INVALID_ARGUMENT, "a zero module base is refused");
+    check(api.unload_module_v2(1) == CE_INVALID_ARGUMENT, "an address that is not a module is refused");
+    check(api.unload_module_v2(reinterpret_cast<uint64_t>(GetModuleHandleW(nullptr))) == CE_UNSUPPORTED,
+          "the host executable is refused");
+    check(api.unload_module_v2(reinterpret_cast<uint64_t>(dll)) == CE_UNSUPPORTED,
+          "the running DLL's own module is refused");
+
+    // A pointer scan over the planted chain, then a CT save.
     wchar_t pointer_command[512]{};
     std::swprintf(pointer_command, std::size(pointer_command),
                   L"{\"id\":14,\"cmd\":\"ptr.scan\",\"args\":{\"target\":\"%llX\",\"levels\":1,"

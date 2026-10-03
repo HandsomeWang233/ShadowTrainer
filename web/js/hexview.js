@@ -136,7 +136,3 @@ export function placeDigit(bytes, index, digit) {
     : ((bytes[cell] & 0xf0) | digit) & 0xff;
 }
 
-/** "0x" plus sixteen uppercase digits, the form the runtime labels use too. */
-export function addressText(address) {
-  return `0x${BigInt(address).toString(16).toUpperCase().padStart(16, '0')}`;
-}

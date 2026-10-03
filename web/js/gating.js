@@ -43,7 +43,6 @@ export function enabled(controls, form) {
     'win-minimize': true,
     'win-maximize': true,
     'win-close': true,
-    nav: !c.stopping && !c.dialog,
 
     // Scan page
     'scan-first': idle && form.comparison <= CE_CMP.BETWEEN,
@@ -94,7 +93,6 @@ export function enabled(controls, form) {
     'memory-forward': !!c.memoryForward,
     'memory-undo': !!c.hexUndo,
     'memory-fill': !!c.hexFill,
-    'memory-address': editing,
     'memory-offsets': editing,
     'memory-fill-byte': editing,
 

@@ -47,6 +47,8 @@
   --accent-softer: rgba(200, 240, 74, 0.06);
   --accent-line: rgba(200, 240, 74, 0.38);
   --focus-ring: rgba(200, 240, 74, 0.55);
+  /* A hex-view selection; a lit-up accent area rather than a solid one. */
+  --selection-soft: rgba(200, 240, 74, 0.14);
   --state-ok: #58d68d;
   --state-busy: #f0b35e;
   --state-danger: #ff6f61;
@@ -856,6 +858,14 @@ input[type="checkbox"]:focus-visible {
   overflow: hidden;
 }
 
+/* The bar is the work in flight, so an idle session has nothing to draw: it is
+ * hidden until a scan starts and stays hidden after New resets the telemetry.
+ * A completed scan keeps it, frozen at full width. The label beside it is
+ * always on screen, which is why the row itself is never hidden. */
+.progress[hidden] {
+  display: none;
+}
+
 /* Determinate: JS sets --fill, e.g. bar.style.setProperty('--fill', '42%').
  * Indeterminate: add .is-indeterminate and the fill animates instead. */
 .progress-fill {
@@ -924,6 +934,28 @@ input[type="checkbox"]:focus-visible {
   border-top-right-radius: var(--r-3);
 }
 
+/* A header the reader can sort by. The caret is drawn from aria-sort, which is
+   also what a screen reader announces, so the two can never disagree. */
+.data-table thead th.is-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.data-table thead th.is-sortable:hover {
+  background: var(--surface-veil-2);
+  color: var(--text-2);
+}
+
+.data-table thead th[aria-sort="ascending"]::after {
+  content: " \25B2";
+  color: var(--accent);
+}
+
+.data-table thead th[aria-sort="descending"]::after {
+  content: " \25BC";
+  color: var(--accent);
+}
+
 .data-table tbody td {
   border-bottom: 1px solid var(--line-hair);
   color: var(--text-1);
@@ -937,13 +969,6 @@ input[type="checkbox"]:focus-visible {
   background: var(--surface-veil);
 }
 
-.data-table td.num,
-.data-table td.mono {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-2);
-}
 
 .data-table tr.is-placeholder td {
   color: var(--text-4);
@@ -954,7 +979,6 @@ input[type="checkbox"]:focus-visible {
   color: var(--text-1);
 }
 
-.col-1 { width: 60px; }
 .col-2 { width: 76px; }
 .col-3 { width: 96px; }
 .col-4 { width: 118px; }
@@ -1046,7 +1070,7 @@ input[type="checkbox"]:focus-visible {
   font-size: var(--fs-xs);
   line-height: 1;
   overflow: hidden;
-  cursor: default;
+  cursor: text;
   transition: background var(--dur-1) var(--ease-1), color var(--dur-1) var(--ease-1),
               box-shadow var(--dur-1) var(--ease-1);
 }
@@ -1066,7 +1090,6 @@ input[type="checkbox"]:focus-visible {
   color: var(--text-3);
 }
 
-/* States wired by the editor in a later step. */
 .hex-cell.selected,
 .ascii-cell.selected {
   background: var(--accent-soft);
@@ -1092,12 +1115,7 @@ input[type="checkbox"]:focus-visible {
    selected cell so the two never read as the same thing. */
 .hex-cell.is-selected-range,
 .ascii-cell.is-selected-range {
-  background: var(--selection-soft, rgba(200, 240, 74, 0.14));
-}
-
-.hex-cell,
-.ascii-cell {
-  cursor: text;
+  background: var(--selection-soft);
 }
 
 /* The grid takes keyboard focus; show it, or the caret would be invisible to
@@ -1184,7 +1202,7 @@ input[type="checkbox"]:focus-visible {
 /* 13. Startup veil                                                       */
 /* ====================================================================== */
 /* The window plays the word itself while WebView2 comes up - see paint_boot in
- * src/webui.cpp, which owns that half of the sequence. The page's half is the
+ * src/ui/webui.cpp, which owns that half of the sequence. The page's half is the
  * reveal: the veil leaves through a hole that grows from the exact centre, which
  * is what makes the UI look like it spreads outwards from the middle. The mask
  * keeps everything OUTSIDE the hole, so the app is uncovered centre-first.
@@ -1254,3 +1272,73 @@ input[type="checkbox"]:focus-visible {
   60%  { opacity: 0.30; }
   100% { opacity: 0; transform: scale(2.2); }
 }
+
+/* ====================================================================== */
+/* 14. Dialog                                                             */
+/* ====================================================================== */
+/* The page's own confirmation, for actions that cannot be undone. Edge's
+ * window.confirm would do the job, but it is Edge's: light chrome, the system
+ * typeface, and the app behind it untouched. This one is the theme's - it sits
+ * centred over a blurred copy of the app, and it is dismissed by the cancel
+ * button, Escape, or a click on the scrim. js/modal.js owns the behaviour.
+ *
+ * backdrop-filter blurs live content, so it costs a compositor pass per frame
+ * while it is up; the app behind a confirmation is normally still and the
+ * dialog is up for a moment. */
+.dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 70;   /* above the startup veil, which is 60 */
+  display: grid;
+  place-items: center;
+}
+
+.dialog[hidden] {
+  display: none;
+}
+
+.dialog-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 7, 9, 0.55);
+  backdrop-filter: blur(7px) saturate(0.85);
+  -webkit-backdrop-filter: blur(7px) saturate(0.85);
+}
+
+.dialog-panel {
+  position: relative;
+  width: min(430px, calc(100vw - 48px));
+  padding: var(--sp-6);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-4);
+  background: var(--surface-2);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  animation: dialog-in var(--dur-2) var(--ease-1) both;
+}
+
+.dialog-title {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.dialog-body {
+  margin: 0 0 var(--sp-5);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-hint);
+  color: var(--text-2);
+  /* The caller writes the paragraphs; keep their line breaks. */
+  white-space: pre-line;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+}
+

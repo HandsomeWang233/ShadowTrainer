@@ -243,6 +243,8 @@ std::wstring Session::records_json() {
         .key(L"selected").u64(selected_id_)
         .key(L"selectedIndex").integer(selected_index_)
         .key(L"selectedOpaque").boolean(selection_opaque())
+        .key(L"sortColumn").integer(records_sort_column_)
+        .key(L"sortDescending").boolean(records_sort_descending_)
         .key(L"label").string(label)
         .end();
     return writer.take();
@@ -325,6 +327,8 @@ std::wstring Session::render_view(int kind) {
         .key(L"start").u64(target->start)
         .key(L"total").u64(target->total)
         .key(L"count").u64(shown)
+        .key(L"sortColumn").integer(target->sort_column)
+        .key(L"sortDescending").boolean(target->sort_descending)
         .key(L"label").string(label);
     writer.key(L"rows").array();
     for (uint64_t i = 0; i < shown; ++i) {
@@ -333,6 +337,12 @@ std::wstring Session::render_view(int kind) {
         for (const auto& cell : row.cells) writer.string(cell);
         writer.end();
     }
+    writer.end();
+    // What each row names, parallel to `rows`, for the commands that act on one.
+    // Only the modules view has any: regions and threads have nothing to act on.
+    writer.key(L"ids").array();
+    for (uint64_t i = 0; i < shown; ++i)
+        writer.u64(target->rows[static_cast<size_t>(target->start + i)].id);
     writer.end();
     writer.end();
     return writer.take();

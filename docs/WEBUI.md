@@ -43,7 +43,7 @@ The page is compiled into the DLL as `RCDATA` and served from a virtual origin,
 `https://shadowtrainer.local/`. Nothing is written to disk, so an injected DLL
 never has to find a writable directory next to an arbitrary host executable.
 
-- Three lists name the same fifteen entries: `web/webui.rc` embeds the files,
+- Three lists name the same seventeen entries: `web/webui.rc` embeds the files,
   `web/resource_ids.h` numbers them, and the table in `src/ui/webview_host.cpp`
   states each MIME type. An entry carries one `path` that is both the URL and
   the location under `web/`, so it has to match the `.rc`. The two ways to get
@@ -60,7 +60,7 @@ never has to find a writable directory next to an arbitrary host executable.
   intact.
 - `find_asset` matches the request against the table by **exact equality**, and
   that is the whole guard on the request path: a hand-written URL can only ever
-  name one of the fifteen listed entries, and no request-derived string is ever
+  name one of the seventeen listed entries, and no request-derived string is ever
   handed to `CreateFileW`. Entries carrying separators does not change that —
   what would weaken it is turning the exact match into a prefix or pattern
   match. `webui.rc` and `resource_ids.h` stay at the root of `web/`, which is
@@ -106,9 +106,9 @@ while the window is already on screen.
 
 ### The word, drawn by the window
 
-`src/ui/cover.cpp` draws it with GDI while the page is still starting. It is meant
-to be the page's own rendering rather than a likeness of it, so it matches what
-the stylesheet would have produced:
+`src/ui/cover.cpp` draws it with GDI while the page is still starting. The page
+carries no copy of the word any more - it only plays the reveal - so this is the
+sequence itself, and these are the rules it runs on:
 
 - the same face (`Segoe UI Variable Text` when the machine has it, otherwise
   `Segoe UI`), the same em size (GDI's `lfHeight` takes it directly), and the
@@ -121,15 +121,25 @@ the stylesheet would have produced:
   measured widths and the drawn ones stay in step with the page's. (Measured:
   without it the word comes out 12% wide, because the page's spacing is negative
   and the cover was not applying any.)
-- the same timing curves, solved rather than approximated: `bezier` runs the
-  actual `cubic-bezier(0.16, 1, 0.3, 1)` and `cubic-bezier(0.2, 0.9, 0.25, 1)`
-  the stylesheet names;
-- the same split the page makes between the box a letter grows into and the
-  letter itself. The box widens on the bezier; the letter fades, lifts and scales
-  **linearly** (from `translateY(0.45em) scale(0.7)`), through its own world
-  transform with the origin at its own box centre. Scaling about the left edge
-  instead walks each letter sideways and drags the row off centre by up to 20px -
-  which is exactly what the first version did;
+- the fly-in and the glow run on solved beziers (`0.16, 1, 0.3, 1` and
+  `0.2, 0.8, 0.3, 1`), run rather than approximated;
+- one clock per letter: its box, fade, lift and scale all share the same linear
+  progress, and the row is the **sum** of every box grown so far, never just the
+  last one's. Both halves were bugs once - a front-loaded width curve opened the
+  box faster than the ink, and summing only the last started letter counted its
+  predecessors as fully open - and either way the word slid left in seven jerks,
+  one per letter, as the row re-centred;
+- the letters start at 780ms, **while** the fly's front-loaded curve is still
+  finishing. Its span runs to 960ms, but its last stretch covers under a pixel,
+  so the word is visibly still from about 750ms - and every version that put a
+  beat between "the word has stopped" and "the row starts widening" (1100ms
+  first, then 900ms) read as a stutter at the hand-over rather than as a beat.
+  Overlapping the two makes the fly's creep into the start of the glide, and the
+  motion never stops;
+- the letter's fade, lift and scale happen through its own world transform with
+  the origin at its own box centre (from `translateY(0.45em) scale(0.7)`).
+  Scaling about the left edge instead walks each letter sideways and drags the
+  row off centre by up to 20px - which is exactly what the first version did;
 - a clip on the row box, standing in for `overflow: hidden` on a `line-height: 1`
   element, so a letter rising into place is revealed by the line rather than
   drawn outside it;
@@ -138,15 +148,18 @@ the stylesheet would have produced:
 - the page's two colours (`#f6faff`, `#b9e6ff`), its radial-gradient glow behind
   the word, and the `INITIALISING` line beneath it.
 
-The word then holds, complete, for two seconds before fading out: long enough to
-be read rather than a flash before the UI.
+The word then holds, complete, for half a second before fading out: a beat that
+separates the landing from the fade rather than a pause on the way to the UI,
+which is what the first two seconds read as.
 
 None of that can be checked by running a test - there is no way to look at a
 window during one - so `cover.cpp` is a separate translation unit with no
-dependence on the window. A throwaway probe can then render frames of it into a
-bitmap and put them beside the browser's, which is how the transform bug above
-was found, and how the word's baseline was confirmed to land on the same pixel
-the page puts it on.
+dependence on the window. `tests/cover_probe.cpp` (built with
+`tools\compile_probe.cmd cover_probe`) renders it frame by frame, measures where
+the ink actually landed, and prints the position and the per-frame delta: a flat
+run followed by a jump is what "not smooth" looks like as numbers, and that is
+how the seven-jerk glide above was found. The transform bug and the word's
+baseline were pinned the same way.
 
 ### Composed off-screen
 
@@ -182,6 +195,17 @@ accurate to the system clock tick, and `WM_TIMER` is a low-priority message, so
 the interval wandered by several milliseconds from frame to frame. The ticker
 starts with the first painted frame and stops at the hand-over, so a settled
 window is not repainting sixty times a second for nothing.
+
+**The stall credit.** The cover is drawn on the window's own thread, so anything
+else running there hides the animation for as long as it runs - and WebView2's
+startup does exactly that: a `Chrome_MessageWindow` message takes about 115 ms
+some 0.8 s into the sequence, which is where the word hands over to the letters,
+and the frames it ate used to pop the first letter into place. The message loop
+times every dispatch and, while the cover is playing, gives anything over
+`stall_credit_ms` (8 ms) back to the cover's clock (`boot_started_`), so the next
+frame continues where the last one stopped: the animation holds a beat instead
+of jumping. Measured with `dbwin_capture` on a real run: the phase no longer
+gaps by more than one composition, where it used to skip 115 ms.
 
 `DwmFlush` is resolved out of `dwmapi.dll` by hand, like the corner call above;
 if it is missing, or composition is off - a remote session, say - the flush fails
@@ -251,9 +275,29 @@ One JSON channel both ways.
 - Commands that change a list (`results.page`, `record.refresh`, `view.load`,
   `ptr.refresh`, ...) answer with the section they changed, so the page paints
   from the reply rather than waiting for the next tick.
+- `scan.progress` and `pointer.progress` are a `{mode, value}` pair with four
+  modes: `idle`, `marquee`, `determinate`, `done`. Only `idle` draws nothing on
+  the page, and every state that is not a scan in flight or a completion folds
+  into it — a session that has never scanned, the telemetry New just reset, and
+  the cancelled and failed passes. So the bar appears with the scan, stays
+  frozen at full width when it completes, and is gone again after New; the label
+  beside it carries the state in words in all four modes.
 - `window.*` and the CT file dialogs are forwarded to the host through
   `Session::Host`; the bridge cannot open a native file picker and does not
   pretend to.
+- Sorting is a command per table (`view.sort`, `record.sort`, `ptr.sort`) and
+  never a browser-side reorder of the rows on screen. The page holds one page of
+  a paged list, so it sends the column that was clicked and paints `sortColumn` /
+  `sortDescending` back onto the headers; the runtime decides whether that is a
+  new column or the same one reversed, and keeps the order across a refresh. The
+  views and the address list sort over everything they hold; the pointer results
+  are read whole for a sort, which the scan's own 65536-result cap bounds. The
+  scan-results table has no sort at all: its list is streamed a page at a time
+  and can run to millions of rows, so there is nothing to sort without reading
+  the whole result file.
+- `view.unload` is the one command that changes host state rather than
+  describing it. Its rails, and the confirmation the page puts in front of it,
+  are in [`PROCESS_VIEWS.md`](PROCESS_VIEWS.md).
 
 ## The tick
 
@@ -287,6 +331,25 @@ keystroke would be silly:
   from the native UI's silent refusal.
 
 `tests/web/gating.test.js` pins the rule table.
+
+## The confirmation dialog
+
+`window.confirm` does work in this WebView2 (`AreDefaultScriptDialogsEnabled` is
+on), and it is what "Unload selected" used at first. But it is Edge's dialog:
+light chrome, the system typeface, and the app behind it left untouched - nothing
+in it belongs to this application. `web/js/modal.js` is the page's own: the
+markup is in `index.html`, the look is section 14 of the stylesheet, and `ask()`
+returns a promise that resolves `true` only when the confirm button is pressed.
+Escape, the cancel button and a click on the scrim all answer `false`, so no
+caller can be left waiting, and a second question answers the first with `false`
+before it takes over.
+
+It sits centred over a scrim that blurs what is behind it (`backdrop-filter`), so
+the app stays visible but out of focus while the question is up. That blur is a
+compositor pass per frame while it shows - the one place in the page that costs
+anything like it, and the reason it is a dialog rather than a permanent overlay.
+The wording and the button labels come from the caller; the module unload passes
+the file path as well as the name, because two modules can share a file name.
 
 ## What stayed native
 
@@ -361,12 +424,29 @@ stop the session.
 | `tests/web/hexview.test.js` | The hex layout tables, the address-order nibble rule, per-mode value formatting, `%g`. Replaces `hex_geometry_tests.cpp`. |
 | `tests/web/gating.test.js` | The enable/disable rules. |
 | `tests/web/enums.test.js` | Parses `include/ce/api_v2.h` and `api.h` and asserts `format.js` mirrors every enum value. |
+| `tests/web/assets.test.js` | The three asset lists name the same files, every embedded file is on disk and numbered, and every module the page imports — and every URL index.html asks for — is one of them. A missing entry is a 404 inside the module graph, which stops the whole page without a single error anywhere. |
+| `tests/web/progress.test.js` | When the two progress bars are on screen: a running or completed scan draws one, every idle state — never scanned, New, cancelled, failed — draws none. |
+| `tests/web/sort.test.js` | Which header carries the sort marker and which way it points, given what the runtime reported. |
+| `tests/cover_probe.cpp` | Not part of `bun test`: renders the startup cover frame by frame and prints where the word sits, so a stutter can be measured instead of argued about. Build with `tools\compile_probe.cmd cover_probe`. |
 | `tools/dev_host.cpp` | Not a test: loads the DLL in-process so the page can be edited and reloaded. |
 
 `bun test tests/web` needs no packages. `runtime_tests` and `runtime_v2_tests`
 are unchanged and still the gate on the window contract — including three
 load/stop/unload cycles, which is what proves the WebView is really gone before
 `FreeLibraryAndExitThread`.
+
+Both `runtime_*` binaries show the DLL's real window, and both are over in about
+a second per load — well inside the cover's 2.6 seconds — so a plain run only
+ever shows the startup animation flash past before the test stops the session.
+To watch the UI instead, either hold it open from the test itself:
+
+```bat
+build\x64\runtime_v2_tests.exe <dll> --hold 10
+```
+
+or use `build\x64\dev_host.exe --seconds 30` (add `--dev` to read `web/` from
+disk). Neither flag is a check: they are the two ways to look at the window
+somebody just built.
 
 ## Still missing
 

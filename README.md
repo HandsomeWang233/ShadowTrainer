@@ -106,8 +106,8 @@ Hiding never stops a scan or a freeze.
 
 ## The API
 
-`include/ce/api.h` and `include/ce/api_v2.h` are plain C, with 47 exports in
-total: 17 in version 1, unchanged since it was frozen, and 30 in version 2, which
+`include/ce/api.h` and `include/ce/api_v2.h` are plain C, with 48 exports in
+total: 17 in version 1, unchanged since it was frozen, and 31 in version 2, which
 adds explicit struct versions, caller-provided buffers and the extended types.
 Version 1 is not going away and is not quietly truncated — a v1 call against a
 session it cannot represent is refused, not rounded off.
